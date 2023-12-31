@@ -1,0 +1,35 @@
+name: Laravel Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        php-versions: ['8.1', '8.2']  # Adjust PHP versions as needed
+        laravel-versions: ['^9.0', '^10.0']  # Adjust Laravel versions as needed
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-versions }}
+        extensions: mbstring, dom, curl, pdo_mysql
+        tools: composer, phpunit
+
+    - name: Install Dependencies
+      run: composer install --no-progress --prefer-dist
+
+    - name: Run Tests
+      run: vendor/bin/phpunit
+
+    # Add additional steps if necessary, like linting, code style checks, etc.

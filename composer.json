@@ -1,0 +1,49 @@
+{
+    "name": "square1/laravel-idempotency",
+    "description": "Add idempotency to Laravel-based APIs, preventing duplicate request processing.",
+    "type": "library",
+    "keywords": [
+        "square1",
+        "laravel-idempotency",
+        "idempotency",
+        "api"
+    ],
+    "license": "MIT",
+    "homepage": "https://github.com/square1-io/laravel-idempotency",
+    "autoload": {
+        "psr-4": {
+            "Square1\\LaravelIdempotency\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Square1\\LaravelIdempotency\\Tests\\": "tests"
+        }
+    },
+    "authors": [
+        {
+            "name": "Paul Conroy",
+            "email": "paul@square1.io"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "illuminate/support": "^9.0|^10.0"
+    },
+    "require-dev": {
+        "laravel/laravel": "^10.3",
+        "phpunit/phpunit": "^10.5",
+        "orchestra/testbench": "^8.18",
+        "laravel/pint": "^1.13"
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Square1\\LaravelIdempotency\\IdempotencyServiceProvider"
+            ]
+        }
+    }
+}
