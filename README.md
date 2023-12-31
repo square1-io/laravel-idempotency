@@ -16,7 +16,7 @@ This package makes it easy to add support for [idempotency](https://en.wikipedia
 | [Recognising Idempotent Responses](#recognising-idempotent-responses) |
 | [Exception Handling](#exception-handling) |
 | [Tests](#tests) |
-| [Licence](#licence) |
+| [License](#license) |
 
 ## What is Idempotency?
 Idempotency is the name given to the ability to make multiple identical requests, and only have the changes applied once. By adding a unique key to each incoming request, the server can detect a repeated request. If it has not seen that request before, the server can safely process it. If the key has been seen previously, the server can return the previous response, without re-processing the request. This is particularly useful if there are API clients operating with unreliable network conditions, where requests get automatically re-tried once a connection is re-established.
