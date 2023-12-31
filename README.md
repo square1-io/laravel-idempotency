@@ -106,6 +106,7 @@ The package's core functionality is provided through middleware. To use it, you 
 
 
 ### Global Usage
+
 To apply the middleware to all routes, add it to the `$middlewareGroups` array in your `app/Http/Kernel.php`:
 
 ``` php
@@ -120,6 +121,7 @@ protected $middlewareGroups = [
 This will run the middleware on all of the routes in the application. However, the `enforced_verbs` value in the package configuration will control whether the middleware has any impact on a given route (by default the middleware won't interfere with GET or HEAD requests).
 
 ### Specific Routes
+
 Alternatively, you can apply the middleware to specific routes:
 
 ``` php
