@@ -47,7 +47,7 @@ class IdempotencyMiddleware
         $lock = Cache::lock($cacheKey, config('idempotency.max_lock_wait_time', 1));
 
         if (! $lock->get()) {
-            return $this->waitForCacheLock($cacheKey, $request, $next);
+            return $this->waitForCacheLock($cacheKey, $request);
         }
 
         $response = $this->processRequest($request, $cacheKey, $next);
@@ -56,7 +56,7 @@ class IdempotencyMiddleware
         return $response;
     }
 
-    private function waitForCacheLock(string $cacheKey, Request $reqest, Closure $next)
+    private function waitForCacheLock(string $cacheKey, Request $request)
     {
         $maxWait = config('idempotency.max_lock_wait_time', 1);
         $tries = 0;
