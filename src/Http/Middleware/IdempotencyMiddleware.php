@@ -3,14 +3,16 @@
 namespace Square1\LaravelIdempotency\Http\Middleware;
 
 use Closure;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
+use Square1\LaravelIdempotency\Exceptions\LockExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
 
 class IdempotencyMiddleware
 {
-    public function handle($request, Closure $next)
+    public function handle(Request $request, Closure $next)
     {
         // If we are getting a verb we don't care about, pass the request straight through
         if (! in_array($request->method(), config('idempotency.enforced_verbs'))) {
@@ -42,7 +44,38 @@ class IdempotencyMiddleware
             return $this->handleCachedResponse($cacheKey, $request);
         }
 
-        return $this->processRequest($request, $cacheKey, $next);
+        $lock = Cache::lock($cacheKey, config('idempotency.max_lock_wait_time', 1));
+
+        if (! $lock->get()) {
+            return $this->waitForCacheLock($cacheKey, $request, $next);
+        }
+
+        $response = $this->processRequest($request, $cacheKey, $next);
+        $lock->release();
+
+        return $response;
+    }
+
+    private function waitForCacheLock(string $cacheKey, Request $reqest, Closure $next)
+    {
+        $maxWait = config('idempotency.max_lock_wait_time', 1);
+        $tries = 0;
+        $maxTries = $maxWait - 1;
+        $sleep = 1;
+
+        while ($tries < $maxTries) {
+            if (Cache::has($cacheKey)) {
+                // The response is now cached, break the loop
+                return $this->handleCachedResponse($cacheKey, $request);
+            }
+
+            // Wait for a bit before checking again
+            sleep($sleep);
+            $tries++;
+        }
+
+        // Throw an exception if the response is not available after waiting
+        throw new LockExceededException();
     }
 
     /**
@@ -64,12 +97,12 @@ class IdempotencyMiddleware
         return auth()->check() ? auth()->user()->id : 'global';
     }
 
-    protected function buildCacheKey($userId, $idempotencyKey)
+    protected function buildCacheKey(string $userId, string $idempotencyKey): string
     {
         return "idempotency:{$userId}:{$idempotencyKey}";
     }
 
-    protected function processRequest($request, $cacheKey, Closure $next)
+    protected function processRequest(Request $request, string $cacheKey, Closure $next)
     {
         $response = $next($request);
 
@@ -84,7 +117,7 @@ class IdempotencyMiddleware
         return $response;
     }
 
-    protected function handleCachedResponse($cacheKey, $request)
+    protected function handleCachedResponse(string $cacheKey, Request $request)
     {
         $cachedData = Cache::get($cacheKey);
         if ($request->path() != $cachedData['path']) {

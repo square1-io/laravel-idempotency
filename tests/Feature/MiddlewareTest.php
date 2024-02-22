@@ -3,6 +3,7 @@
 namespace Square1\LaravelIdempotency\Tests\Feature;
 
 use Illuminate\Support\Facades\Cache;
+use Mockery;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -97,7 +98,8 @@ class MiddlewareTest extends TestCase
         $this->post('/user', ['field' => 'changed'], ['Idempotency-Key' => $key]);
         $response = $this->post('/account', ['field' => 'change-again'], ['Idempotency-Key' => $key]);
 
-        $response->assertStatus(Response::HTTP_BAD_REQUEST);
+        $response->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'MismatchedPathException']);
     }
 
     /** @test */
@@ -143,7 +145,8 @@ class MiddlewareTest extends TestCase
         $key = 'unique-key-123';
         $response = $this->post('/user', ['field' => 'changed']);
 
-        $response->assertStatus(Response::HTTP_BAD_REQUEST);
+        $response->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'MissingIdempotencyKeyException']);
     }
 
     /** @test */
@@ -186,6 +189,30 @@ class MiddlewareTest extends TestCase
         $secondResponse = $this->post('/user', ['field' => 'should not change'], ['Idempotency-Key' => $key]);
 
         $firstResponse->assertStatus(Response::HTTP_OK);
-        $secondResponse->assertStatus(Response::HTTP_BAD_REQUEST);
+        $secondResponse->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'DuplicateRequestException']);
+    }
+
+    /** @test */
+    public function duplicate_request_timeout_works()
+    {
+        config(['idempotency.max_lock_wait_time' => 2]);
+        $key = 'unique-key-123';
+        $cacheKey = 'idempotency:global:'.$key;
+
+        $lockMock = Mockery::mock();
+        $lockMock->shouldReceive('get')->andReturn(false);
+        // Mock the cache facade
+        Cache::shouldReceive('lock')
+            ->with($cacheKey, config('idempotency.max_lock_wait_time'))
+            ->andReturn($lockMock); // Simulate that the lock is present
+
+        Cache::shouldReceive('has')
+            ->with($cacheKey)
+            ->andReturn(null);
+
+        $this->post('/account', [], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'LockExceededException']);
     }
 }

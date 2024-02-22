@@ -20,6 +20,9 @@ return [
     // not implement the checks, allowing requests to pass through the middleware
     'enforced_verbs' => ['POST', 'PUT', 'PATCH', 'DELETE'],
 
+    // When a race condition happens, we create a cache lock. How long should the lock persist?
+    'max_lock_wait_time' => 10,
+
     // Define custom resolver of per-user identifier. Leave this commented out
     // to default to auth()->user()->id. To support config caching, resolver should
     // be defined as below - class and method pair.
