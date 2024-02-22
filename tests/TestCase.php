@@ -7,7 +7,7 @@ use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Support\Facades\Route;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
-use Square1\LaravelIdempotency\Exceptions\LockExceededException;
+use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
 use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
@@ -85,7 +85,7 @@ class CustomExceptionHandler extends Handler
         if ($e instanceof MismatchedPathException
             || $e instanceof MissingIdempotencyKeyException
             || $e instanceof DuplicateRequestException
-            || $e instanceof LockExceededException) {
+            || $e instanceof LockWaitExceededException) {
             return response()->json([
                 'error' => $e->getMessage(),
                 'class' => class_basename($e),

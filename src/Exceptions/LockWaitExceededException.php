@@ -2,6 +2,6 @@
 
 namespace Square1\LaravelIdempotency\Exceptions;
 
-class LockExceededException extends \Exception
+class LockWaitExceededException extends \Exception
 {
 }

@@ -6,7 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
-use Square1\LaravelIdempotency\Exceptions\LockExceededException;
+use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
 
@@ -75,7 +75,7 @@ class IdempotencyMiddleware
         }
 
         // Throw an exception if the response is not available after waiting
-        throw new LockExceededException();
+        throw new LockWaitExceededException();
     }
 
     /**

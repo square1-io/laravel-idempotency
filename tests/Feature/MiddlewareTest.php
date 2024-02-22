@@ -213,7 +213,7 @@ class MiddlewareTest extends TestCase
 
         $this->post('/account', [], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'LockExceededException']);
+            ->assertJson(['class' => 'LockWaitExceededException']);
     }
 
     /** @test */
@@ -229,7 +229,7 @@ class MiddlewareTest extends TestCase
             'path' => 'account',
             'headers' => ['Header' => 'Hi'],
             'status' => 200,
-            'originalKey' => $key
+            'originalKey' => $key,
         ];
 
         $lockMock = Mockery::mock();
