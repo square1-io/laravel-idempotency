@@ -4,12 +4,13 @@ namespace Square1\LaravelIdempotency\Tests\Feature;
 
 use Illuminate\Support\Facades\Cache;
 use Mockery;
+use PHPUnit\Framework\Attributes\Test;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
 class MiddlewareTest extends TestCase
 {
-    /** @test */
+    #[Test]
     public function it_handles_requests_with_idempotency_key()
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
@@ -20,7 +21,7 @@ class MiddlewareTest extends TestCase
         $response->assertJson(['id' => $user->id, 'field' => 'change']);
     }
 
-    /** @test */
+    #[Test]
     public function idempotency_header_only_appears_on_repeated_request()
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
@@ -33,7 +34,7 @@ class MiddlewareTest extends TestCase
         $response->assertHeader('Idempotency-Relayed', $idempotencyKey);
     }
 
-    /** @test */
+    #[Test]
     public function idempotency_header_missing_on_non_applicable_requests()
     {
         // Ensure GET isn't in the set, then make a GET request.
@@ -45,7 +46,7 @@ class MiddlewareTest extends TestCase
         $response->assertHeaderMissing('Idempotency-Relayed');
     }
 
-    /** @test */
+    #[Test]
     public function different_users_get_different_responses_for_same_idempotency_key()
     {
         $key = 'same-key-for-both-users';
@@ -70,7 +71,7 @@ class MiddlewareTest extends TestCase
         $this->assertNotEquals($firstResponse->getContent(), $secondResponse->getContent());
     }
 
-    /** @test */
+    #[Test]
     public function idempotency_key_creates_cache_entry()
     {
         $user = $this->getUnguardedUser();
@@ -89,7 +90,7 @@ class MiddlewareTest extends TestCase
         $this->assertArrayHasKey('path', $cachedEntry);
     }
 
-    /** @test */
+    #[Test]
     public function using_same_idempotency_key_with_different_path_throws_exception()
     {
         $user = $this->getUnguardedUser();
@@ -102,7 +103,7 @@ class MiddlewareTest extends TestCase
             ->assertJson(['class' => 'MismatchedPathException']);
     }
 
-    /** @test */
+    #[Test]
     public function same_idempotency_key_returns_same_response_and_does_not_duplicate_change()
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
@@ -118,7 +119,7 @@ class MiddlewareTest extends TestCase
         $this->assertEquals('change', auth()->user()->field);
     }
 
-    /** @test */
+    #[Test]
     public function idempotency_key_header_name_can_be_changed_in_config()
     {
         $customHeader = 'X-Custom-Key';
@@ -137,7 +138,7 @@ class MiddlewareTest extends TestCase
         $this->assertEquals('change', auth()->user()->field);
     }
 
-    /** @test */
+    #[Test]
     public function missing_idempotency_key_causes_exception()
     {
         $user = $this->getUnguardedUser();
@@ -149,7 +150,7 @@ class MiddlewareTest extends TestCase
             ->assertJson(['class' => 'MissingIdempotencyKeyException']);
     }
 
-    /** @test */
+    #[Test]
     public function config_change_allows_missing_idempotency_key()
     {
         config(['idempotency.ignore_empty_key' => true]);
@@ -161,7 +162,7 @@ class MiddlewareTest extends TestCase
         $response->assertStatus(Response::HTTP_OK);
     }
 
-    /** @test */
+    #[Test]
     public function request_without_authenticated_user_builds_key_ok()
     {
         $key = 'unique-key-123';
@@ -177,7 +178,7 @@ class MiddlewareTest extends TestCase
         $this->assertArrayHasKey('path', $cachedEntry);
     }
 
-    /** @test */
+    #[Test]
     public function config_change_to_error_on_duplicate_works()
     {
         config(['idempotency.on_duplicate_behaviour' => 'exception']);
@@ -193,7 +194,7 @@ class MiddlewareTest extends TestCase
             ->assertJson(['class' => 'DuplicateRequestException']);
     }
 
-    /** @test */
+    #[Test]
     public function duplicate_request_timeout_works()
     {
         config(['idempotency.max_lock_wait_time' => 2]);
@@ -216,7 +217,7 @@ class MiddlewareTest extends TestCase
             ->assertJson(['class' => 'LockWaitExceededException']);
     }
 
-    /** @test */
+    #[Test]
     public function duplicate_request_polling_cache_returns_cached_value_once_available()
     {
         config(['idempotency.max_lock_wait_time' => 3]);
