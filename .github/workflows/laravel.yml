@@ -13,7 +13,7 @@ jobs:
 
     strategy:
       matrix:
-        php-versions: ['8.1', '8.2']  # Adjust PHP versions as needed
+        php-versions: ['8.2', '8.3']  # Adjust PHP versions as needed
         laravel-versions: ['^9.0', '^10.0', '^11.0']  # Adjust Laravel versions as needed
 
     steps:
