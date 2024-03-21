@@ -108,6 +108,23 @@ The package's core functionality is provided through middleware. To use it, you 
 
 ### Global Usage
 
+
+#### Laravel 11+
+To apply the middleware to all routes, you can append it to the global middleware stack in your application's `app/bootstrap.php` file:
+
+``` php
+use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
+
+...
+->withMiddleware(function (Middleware $middleware) {
+     $middleware->append(IdempotencyMiddleware::class);
+})
+```
+
+The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 11, please see [the docs](https://laravel.com/docs/11.x/middleware#global-middleware).
+
+
+#### Laravel <= 10
 To apply the middleware to all routes, add it to the `$middlewareGroups` array in your `app/Http/Kernel.php`:
 
 ``` php
@@ -123,6 +140,31 @@ This will run the middleware on all of the routes in the application. However, t
 
 ### Specific Routes
 
+#### Laravel 11+
+You may append the middleware to all api routes, taking advantage of Laravel's [default middleware groups](https://laravel.com/docs/11.x/middleware#laravels-default-middleware-groups):
+
+``` php
+// app/boostrap.php
+use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
+...
+->withMiddleware(function (Middleware $middleware) {
+    $middleware->api(append: [
+        IdempotencyMiddleware::class
+    ]);
+})
+```
+
+Or you can apply the middleware to specific routes inside your routes file:
+
+``` php
+
+Route::get('/profile', function () {
+    // ...
+})->middleware(IdempotencyMiddleware::class);
+```
+
+
+#### Laravel <= 10
 Alternatively, you can apply the middleware to specific routes:
 
 ``` php

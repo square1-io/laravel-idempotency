@@ -30,7 +30,12 @@
         "php": "^8.2",
         "illuminate/support": "^9.0|^10.0|^11.0"
     },
-
+    "require-dev": {
+        "laravel/framework": "^11.0",
+        "phpunit/phpunit": "^11.0",
+        "orchestra/testbench": "^9.0",
+        "laravel/pint": "^1.14"
+    },
     "scripts": {
         "test": "vendor/bin/phpunit"
     },
@@ -40,11 +45,5 @@
                 "Square1\\LaravelIdempotency\\IdempotencyServiceProvider"
             ]
         }
-    },
-    "require-dev": {
-        "laravel/framework": "^11.0",
-        "phpunit/phpunit": "^11.0",
-        "orchestra/testbench": "^9.0",
-        "laravel/pint": "^1.14"
     }
 }
