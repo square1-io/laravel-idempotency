@@ -3,6 +3,7 @@
 namespace Square1\LaravelIdempotency\Tests\Feature;
 
 use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\Test;
 use Square1\LaravelIdempotency\Tests\CustomUserIdResolver;
 use Square1\LaravelIdempotency\Tests\TestCase;
 
@@ -16,7 +17,7 @@ class ResolveUserIdFromConfigTest extends TestCase
         parent::getEnvironmentSetup($app);
     }
 
-    /** @test */
+    #[Test]
     public function it_uses_custom_user_id_resolver_from_config()
     {
         $key = 'unique-key-123';
