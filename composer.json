@@ -45,7 +45,4 @@
                 "Square1\\LaravelIdempotency\\IdempotencyServiceProvider"
             ]
         }
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true
-}
+    }

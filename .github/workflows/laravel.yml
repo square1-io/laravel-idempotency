@@ -2,7 +2,7 @@ name: Laravel Build and Test
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -37,15 +37,9 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick
           coverage: none
 
-      - name: Configure Composer minimum stability
-        run: |
-          composer config minimum-stability dev
-          composer config prefer-stable true
-
       - name: Install dependencies
         run: |
           composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" "phpunit/phpunit:${{ matrix.phpunit }}" --no-interaction --no-update
           composer update --${{ matrix.dependency-version }} --prefer-dist --no-interaction
       - name: Execute tests
         run: vendor/bin/phpunit
-    # Add additional steps if necessary, like linting, code style checks, etc.
