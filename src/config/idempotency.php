@@ -8,9 +8,9 @@ return [
 
     // What to do when we get a duplicate?
     // Options are:
-    // - replay: Sends the same response seen previously
-    // - exception: Throw an exception
-    'on_duplicate_behaviour' => \Square1\LaravelIdempotency\Enums\DuplicateBehaviour::REPLAY,
+    // - DuplicateBehaviour::REPLAY->value: Sends the same response seen previously
+    // - DuplicateBehaviour::EXCEPTION->value: Throw an exception
+    'on_duplicate_behaviour' => \Square1\LaravelIdempotency\Enums\DuplicateBehaviour::REPLAY->value,
 
     // Should we carry on if a user has not supplied an idempotency key?
     // Setting this to false will throw a MissingIdempotencyKey exception if no key is supplied.

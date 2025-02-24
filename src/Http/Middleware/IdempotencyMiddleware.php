@@ -126,7 +126,7 @@ class IdempotencyMiddleware
         }
 
         // Config option to throw exception on duplicate?
-        if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION) {
+        if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION->value) {
             throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
