@@ -51,8 +51,6 @@ This documentation covers the installation of the Idempotency package on the ser
 
 ### Require the package
 
-Via Composer
-
 ``` bash
 $ composer require square1/laravel-idempotency
 ```
@@ -109,6 +107,7 @@ The package's core functionality is provided through middleware. To use it, you 
 **N.B** As this package needs to be aware of the current user, ensure that the middleware is added after any user authentication actions are performed.
 
 ### Global Usage
+
 To apply the middleware to all routes, you can append it to the global middleware stack in your application's `bootstrap/app.php` file:
 
 ``` php
