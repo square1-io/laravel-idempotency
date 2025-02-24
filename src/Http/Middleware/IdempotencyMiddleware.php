@@ -5,7 +5,9 @@ namespace Square1\LaravelIdempotency\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Square1\LaravelIdempotency\Enums\DuplicateBehaviour;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
+use Square1\LaravelIdempotency\Exceptions\InvalidConfigurationException;
 use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
@@ -14,6 +16,8 @@ class IdempotencyMiddleware
 {
     public function handle(Request $request, Closure $next)
     {
+        $this->validateConfig();
+
         // If we are getting a verb we don't care about, pass the request straight through
         if (! in_array($request->method(), config('idempotency.enforced_verbs'))) {
             return $next($request);
@@ -25,7 +29,7 @@ class IdempotencyMiddleware
             if (config('idempotency.ignore_empty_key')) {
                 return $next($request);
             } else {
-                throw new MissingIdempotencyKeyException();
+                throw new MissingIdempotencyKeyException(__('Idempotency key "'.config('idempotency.idempotency_header').'" not found.'));
             }
         }
 
@@ -75,7 +79,7 @@ class IdempotencyMiddleware
         }
 
         // Throw an exception if the response is not available after waiting
-        throw new LockWaitExceededException();
+        throw new LockWaitExceededException(__('Lock wait time of '.$maxWait.' seconds exceeded.'));
     }
 
     /**
@@ -121,16 +125,49 @@ class IdempotencyMiddleware
     {
         $cachedData = Cache::get($cacheKey);
         if ($request->path() != $cachedData['path']) {
-            throw new MismatchedPathException();
+            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedData['path'].').'));
         }
 
         // Config option to throw exception on duplicate?
-        if (config('idempotency.on_duplicate_behaviour') == 'exception') {
-            throw new DuplicateRequestException();
+        if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION->value) {
+            throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
         return response($cachedData['body'], $cachedData['status'])
             ->withHeaders($cachedData['headers'])
             ->header('Idempotency-Relayed', $cachedData['originalKey']);
+    }
+
+    /**
+     * Validate that the configuration values are valid
+     *
+     * @throws InvalidConfigurationException
+     */
+    protected function validateConfig()
+    {
+        $behaviour = config('idempotency.on_duplicate_behaviour');
+
+        try {
+            // This will throw a ValueError if the behavior is not valid
+            DuplicateBehaviour::from($behaviour);
+        } catch (\ValueError $e) {
+            $validOptions = implode(', ', array_column(DuplicateBehaviour::cases(), 'value'));
+            throw new InvalidConfigurationException(
+                "Invalid idempotency duplicate behavior: '{$behaviour}'. Valid options are: {$validOptions}"
+            );
+        }
+
+        // You can add similar validation for other config values if needed
+        $enforced_verbs = config('idempotency.enforced_verbs', []);
+        $valid_verbs = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
+        foreach ($enforced_verbs as $verb) {
+            if (! in_array(strtoupper($verb), $valid_verbs)) {
+                throw new InvalidConfigurationException(
+                    "Invalid HTTP verb in enforced_verbs: '{$verb}'. Valid verbs are: ".
+                    implode(', ', $valid_verbs)
+                );
+            }
+        }
     }
 }

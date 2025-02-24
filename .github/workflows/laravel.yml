@@ -13,23 +13,33 @@ jobs:
 
     strategy:
       matrix:
-        php-versions: ['8.2', '8.3']  # Adjust PHP versions as needed
-        laravel-versions: ['^9.0', '^10.0', '^11.0']  # Adjust Laravel versions as needed
+        php: [8.2, 8.3, 8.4]
+        laravel: ['11.*', '12.*']
+        dependency-version: [prefer-lowest, prefer-stable]
+        include:
+          - laravel: 11.*
+            testbench: 9.*
+            phpunit: 10.*
+          - laravel: 12.*
+            testbench: 10.*
+            phpunit: 11.*
+
+    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.dependency-version }} - ${{ matrix.os }}
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up PHP
-      uses: shivammathur/setup-php@v2
-      with:
-        php-version: ${{ matrix.php-versions }}
-        extensions: mbstring, dom, curl, pdo_mysql
-        tools: composer, phpunit
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, soap, intl, gd, exif, iconv, imagick
+          coverage: none
 
-    - name: Install Dependencies
-      run: composer install --no-progress --prefer-dist
-
-    - name: Run Tests
-      run: vendor/bin/phpunit
-
-    # Add additional steps if necessary, like linting, code style checks, etc.
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" "phpunit/phpunit:${{ matrix.phpunit }}" --no-interaction --no-update
+          composer update --${{ matrix.dependency-version }} --prefer-dist --no-interaction
+      - name: Execute tests
+        run: vendor/bin/phpunit

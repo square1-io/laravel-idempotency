@@ -15,6 +15,7 @@ This package makes it easy to add support for [idempotency](https://en.wikipedia
 | [Usage](#usage) |
 | [Recognising Idempotent Responses](#recognising-idempotent-responses) |
 | [Exception Handling](#exception-handling) |
+| [Versioning](#versioning) |
 | [Tests](#tests) |
 | [License](#license) |
 
@@ -50,8 +51,6 @@ This documentation covers the installation of the Idempotency package on the ser
 
 ### Require the package
 
-Via Composer
-
 ``` bash
 $ composer require square1/laravel-idempotency
 ```
@@ -75,7 +74,7 @@ After publishing the configuration file, you can modify it as per your requireme
 * `cache_duration`: Time for which responses should be cached, in seconds. This value controls the period after which a re-used idempotency key would be treated as a new request. Defaults to 1 day.
 * `idempotency_header`: The name of the request header used by the client to pass the idempotency key. Defaults to `Idempotency-Key`.
 * `ignore_empty_key`: By default, if no idempotency key is passed when we expect one, a `MissingIdempotencyKeyException` exception will be thrown. If you wish to support requests where the key is missing, this can be set to `true` to prevent that exception being thrown. This may be useful during a period of api client update to roll out the key, for example. Defaults to `false`.
-* `enforced_verbs`: An array of HTTP verbs against which idempotency checks should be applied. Typically GET and HEAD requests don't change state, so don't require idempotency checks, but this array can be edited if there are different verbs you wish to check against. Defaults to `['POST', 'PUT', 'PATCH', 'DELETE']`.
+* `enforced_verbs`: An array of HTTP verbs against which idempotency checks should be applied. Typically GET and HEAD requests don't change state, so don't require idempotency checks, but this array can be edited if there are different verbs you wish to check against. The default set is `\Illuminate\Http\Request::METHOD_POST`, `::METHOD_PUT`, `::METHOD_PATCH`, and `::METHOD_DELETE`.
 * `on_duplicate_behaviour`: By default, the package will replay previously-seen responses when an idempotency key is re-used. Your application may wish to handle this duplication differently - throwing an error, for example. Setting this value to `exception` will cause a `DuplicateRequestException` to be thrown in this case. Defaults to `replay`.
 * `max_lock_wait_time`: To avoid race conditions, a cache lock is created when a request comes in. If another request comes in before the cache is populated but after the lock has been taken, the second request will internally poll every second to see if the cache is populated yet, giving up after this number of seconds.
 * `user_id_resolver`: Idempotent keys are unique per-user, meaning that if two different users somehow use the same key, there won't be a key collision. This requires the package to build a cache key using the current authenticated user when building the cache. By default, the package will use Laravel's `auth()->user()->id` value. If you want to use a different value to uniquely identify your users, a class-method pair can be added to this value to implement that custom value.
@@ -107,13 +106,9 @@ The package's core functionality is provided through middleware. To use it, you 
 
 **N.B** As this package needs to be aware of the current user, ensure that the middleware is added after any user authentication actions are performed.
 
-
-
 ### Global Usage
 
-
-#### Laravel 11+
-To apply the middleware to all routes, you can append it to the global middleware stack in your application's `app/bootstrap.php` file:
+To apply the middleware to all routes, you can append it to the global middleware stack in your application's `bootstrap/app.php` file:
 
 ``` php
 use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
@@ -124,30 +119,18 @@ use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
 })
 ```
 
-The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 11, please see [the docs](https://laravel.com/docs/11.x/middleware#global-middleware).
+The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 12, please see [the docs](https://laravel.com/docs/12.x/middleware#global-middleware).
 
-
-#### Laravel <= 10
-To apply the middleware to all routes, add it to the `$middlewareGroups` array in your `app/Http/Kernel.php`:
-
-``` php
-protected $middlewareGroups = [
-    'api' => [
-        // other middleware...
-        \Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware::class,
-    ],
-];
-```
 
 This will run the middleware on all of the routes in the application. However, the `enforced_verbs` value in the package configuration will control whether the middleware has any impact on a given route (by default the middleware won't interfere with GET or HEAD requests).
 
 ### Specific Routes
+Alternatively, it can be targeted to specific routes.
 
-#### Laravel 11+
 You may append the middleware to all api routes, taking advantage of Laravel's [default middleware groups](https://laravel.com/docs/11.x/middleware#laravels-default-middleware-groups):
 
 ``` php
-// app/boostrap.php
+// bootstrap/app.php
 use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
 ...
 ->withMiddleware(function (Middleware $middleware) {
@@ -167,23 +150,6 @@ Route::get('/profile', function () {
 ```
 
 
-#### Laravel <= 10
-Alternatively, you can apply the middleware to specific routes:
-
-``` php
-// App\Http\Kernel
-protected $middlewareAliases = [
-    ...
-    'idempotency' => \Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware::class,
-    ...
-
-// routes/api.php
-Route::middleware('idempotency')->group(function () {
-    Route::post('/your-api-endpoint', 'YourController@method');
-    // other routes
-});
-```
-
 ## Recognising Idempotent Responses
 When a request is successfully performed, it will be returned to the client, and the response cached. After a repeat idempotency key is seen, this cache value is returned. In this case, an additional header, `Idempotency-Relayed` is returned. This header contains the same idempotency key sent by the client, and is a signal to clients that this response has been repeated. This header is only present on the repeated response, never the original one.
 
@@ -198,6 +164,16 @@ This package potentially throws a number of exceptions, all under the `Square1\L
 * `DuplicateRequestException`: By default the package will replay a response when a previous idempotency key is seen again. Changing the config value `on_duplicate_behaviour` to `exception` will cause an exception to be thrown instead (useful for applications when a re-sent request is more likely a bug in the client).
 * `LockExceededException`: To avoid race conditions for two requests with identical keys, each request that doesn't see a cached response already present first tries to acquire a cache lock. Only one request can get this lock, so the losing request(s) will poll the cache periodically to get the response. If the waiting time exceeds the value in `config('idempotency.max_lock_wait_time')`, a `LockExceededException` exception is thrown.
 * `MissingIdempotencyKeyException`: Thrown when a request handled by the idempotency middleware does not have a key present. This check is performed after the `enforced_verbs` check, so, for example, if GET requests are not to be considered by the middleware, a GET request without a key won't trigger this exception. This exception will be thrown, unless the config value `ignore_empty_key` has been changed to `true`.
+
+
+## Versioning
+With the release of Laravel 12 support, the package versioning scheme changed to match that of Laravel's major releases.
+
+| Package Version | Laravel Version(s) |
+|-----------------|--------------------|
+| 12.*            | 12, 11             |
+| 2.0.0           | 11, 10, 9          |
+| 1.*             | 10,9               |
 
 
 ## Tests

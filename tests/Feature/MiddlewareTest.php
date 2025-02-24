@@ -166,7 +166,7 @@ class MiddlewareTest extends TestCase
     public function request_without_authenticated_user_builds_key_ok()
     {
         $key = 'unique-key-123';
-        $response = $this->post('/account', [], ['Idempotency-Key' => $key]);
+        $this->post('/account', [], ['Idempotency-Key' => $key]);
 
         $cacheKey = 'idempotency:global:'.$key;
         $this->assertTrue(Cache::has($cacheKey));
@@ -181,7 +181,7 @@ class MiddlewareTest extends TestCase
     #[Test]
     public function config_change_to_error_on_duplicate_works()
     {
-        config(['idempotency.on_duplicate_behaviour' => 'exception']);
+        config(['idempotency.on_duplicate_behaviour' => \Square1\LaravelIdempotency\Enums\DuplicateBehaviour::EXCEPTION->value]);
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
         $key = 'unique-key-123';
@@ -250,8 +250,36 @@ class MiddlewareTest extends TestCase
             ->once()
             ->andReturn($cacheResponse);
 
-        $response = $this->post('/account', [], ['Idempotency-Key' => $key])
+        $this->post('/account', [], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_OK)
             ->assertJson(['status' => 'Hello']);
+    }
+
+    #[Test]
+    public function unrecognised_http_verb_throws_exception()
+    {
+        // Set an invalid HTTP verb in the config
+        config(['idempotency.enforced_verbs' => ['POST', 'INVALID_VERB']]);
+
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => 'test-key'])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'InvalidConfigurationException']);
+    }
+
+    #[Test]
+    public function unrecognised_duplicate_behaviour_throws_exception()
+    {
+        // Set an invalid duplicate behavior in the config
+        config(['idempotency.on_duplicate_behaviour' => 'invalid_behavior']);
+
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => 'test-key'])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'InvalidConfigurationException']);
     }
 }
