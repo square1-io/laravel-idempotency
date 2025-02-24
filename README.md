@@ -109,9 +109,6 @@ The package's core functionality is provided through middleware. To use it, you 
 **N.B** As this package needs to be aware of the current user, ensure that the middleware is added after any user authentication actions are performed.
 
 ### Global Usage
-The middleware can be set to run on all routes.
-
-#### Laravel 11+
 To apply the middleware to all routes, you can append it to the global middleware stack in your application's `bootstrap/app.php` file:
 
 ``` php
@@ -123,27 +120,14 @@ use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
 })
 ```
 
-The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 11, please see [the docs](https://laravel.com/docs/11.x/middleware#global-middleware).
+The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 12, please see [the docs](https://laravel.com/docs/12.x/middleware#global-middleware).
 
-
-#### Laravel <= 10
-To apply the middleware to all routes, add it to the `$middlewareGroups` array in your `app/Http/Kernel.php`:
-
-``` php
-protected $middlewareGroups = [
-    'api' => [
-        // other middleware...
-        \Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware::class,
-    ],
-];
-```
 
 This will run the middleware on all of the routes in the application. However, the `enforced_verbs` value in the package configuration will control whether the middleware has any impact on a given route (by default the middleware won't interfere with GET or HEAD requests).
 
 ### Specific Routes
 Alternatively, it can be targeted to specific routes.
 
-#### Laravel 11+
 You may append the middleware to all api routes, taking advantage of Laravel's [default middleware groups](https://laravel.com/docs/11.x/middleware#laravels-default-middleware-groups):
 
 ``` php
@@ -166,23 +150,6 @@ Route::get('/profile', function () {
 })->middleware(IdempotencyMiddleware::class);
 ```
 
-
-#### Laravel <= 10
-Alternatively, you can apply the middleware to specific routes:
-
-``` php
-// App\Http\Kernel
-protected $middlewareAliases = [
-    ...
-    'idempotency' => \Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware::class,
-    ...
-
-// routes/api.php
-Route::middleware('idempotency')->group(function () {
-    Route::post('/your-api-endpoint', 'YourController@method');
-    // other routes
-});
-```
 
 ## Recognising Idempotent Responses
 When a request is successfully performed, it will be returned to the client, and the response cached. After a repeat idempotency key is seen, this cache value is returned. In this case, an additional header, `Idempotency-Relayed` is returned. This header contains the same idempotency key sent by the client, and is a signal to clients that this response has been repeated. This header is only present on the repeated response, never the original one.
