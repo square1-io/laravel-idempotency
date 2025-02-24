@@ -181,7 +181,7 @@ class MiddlewareTest extends TestCase
     #[Test]
     public function config_change_to_error_on_duplicate_works()
     {
-        config(['idempotency.on_duplicate_behaviour' => 'exception']);
+        config(['idempotency.on_duplicate_behaviour' => \Square1\LaravelIdempotency\Enums\DuplicateBehaviour::EXCEPTION]);
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
         $key = 'unique-key-123';

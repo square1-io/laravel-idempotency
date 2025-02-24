@@ -5,6 +5,7 @@ namespace Square1\LaravelIdempotency\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Square1\LaravelIdempotency\Enums\DuplicateBehaviour;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
 use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
@@ -25,7 +26,7 @@ class IdempotencyMiddleware
             if (config('idempotency.ignore_empty_key')) {
                 return $next($request);
             } else {
-                throw new MissingIdempotencyKeyException();
+                throw new MissingIdempotencyKeyException(__('Idempotency key "'.config('idempotency.idempotency_header').'" not found.'));
             }
         }
 
@@ -75,7 +76,7 @@ class IdempotencyMiddleware
         }
 
         // Throw an exception if the response is not available after waiting
-        throw new LockWaitExceededException();
+        throw new LockWaitExceededException(__('Lock wait time of '.$maxWait.' seconds exceeded.'));
     }
 
     /**
@@ -121,12 +122,12 @@ class IdempotencyMiddleware
     {
         $cachedData = Cache::get($cacheKey);
         if ($request->path() != $cachedData['path']) {
-            throw new MismatchedPathException();
+            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedData['path'].').'));
         }
 
         // Config option to throw exception on duplicate?
-        if (config('idempotency.on_duplicate_behaviour') == 'exception') {
-            throw new DuplicateRequestException();
+        if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION) {
+            throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
         return response($cachedData['body'], $cachedData['status'])
