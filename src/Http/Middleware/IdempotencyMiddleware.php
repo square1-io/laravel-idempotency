@@ -45,7 +45,10 @@ class IdempotencyMiddleware
         $cacheKey = $this->buildCacheKey($userId, $idempotencyKey);
 
         if (Cache::has($cacheKey)) {
-            return $this->handleCachedResponse($cacheKey, $request);
+            $cachedData = Cache::get($cacheKey);
+            if (is_array($cachedData)) {
+                return $this->handleCachedResponse($cachedData, $request);
+            }
         }
 
         $lock = Cache::lock($cacheKey, config('idempotency.max_lock_wait_time', 1));
@@ -69,8 +72,11 @@ class IdempotencyMiddleware
 
         while ($tries < $maxTries) {
             if (Cache::has($cacheKey)) {
-                // The response is now cached, break the loop
-                return $this->handleCachedResponse($cacheKey, $request);
+                $cachedData = Cache::get($cacheKey);
+                if (is_array($cachedData)) {
+                    // The response is now cached, break the loop
+                    return $this->handleCachedResponse($cachedData, $request);
+                }
             }
 
             // Wait for a bit before checking again
@@ -121,9 +127,8 @@ class IdempotencyMiddleware
         return $response;
     }
 
-    protected function handleCachedResponse(string $cacheKey, Request $request)
+    protected function handleCachedResponse(array $cachedData, Request $request)
     {
-        $cachedData = Cache::get($cacheKey);
         if ($request->path() != $cachedData['path']) {
             throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedData['path'].').'));
         }
