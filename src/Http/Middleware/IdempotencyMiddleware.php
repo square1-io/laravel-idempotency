@@ -6,11 +6,13 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Square1\LaravelIdempotency\Enums\DuplicateBehaviour;
+use Square1\LaravelIdempotency\Exceptions\CorruptedCacheDataException;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
 use Square1\LaravelIdempotency\Exceptions\InvalidConfigurationException;
 use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
+use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 
 class IdempotencyMiddleware
 {
@@ -48,7 +50,7 @@ class IdempotencyMiddleware
             return $this->handleCachedResponse($cacheKey, $request);
         }
 
-        $lock = Cache::lock($cacheKey, config('idempotency.max_lock_wait_time', 1));
+        $lock = Cache::lock($this->buildLockKey($cacheKey));
 
         if (! $lock->get()) {
             return $this->waitForCacheLock($cacheKey, $request);
@@ -106,26 +108,60 @@ class IdempotencyMiddleware
         return "idempotency:{$userId}:{$idempotencyKey}";
     }
 
+    protected function buildLockKey(string $cacheKey): string
+    {
+        return "lock:{$cacheKey}";
+    }
+
     protected function processRequest(Request $request, string $cacheKey, Closure $next)
     {
         $response = $next($request);
 
-        Cache::put($cacheKey, [
-            'body' => $response->getContent(),
-            'status' => $response->getStatusCode(),
-            'headers' => $response->headers->all(),
-            'path' => $request->path(),
-            'originalKey' => $request->header(config('idempotency.idempotency_header')),
-        ], config('idempotency.cache_duration'));
+        Cache::put($cacheKey, new CachedResponseValue(
+            $response->getContent(),
+            $response->getStatusCode(),
+            $response->headers->all(),
+            $request->path(),
+            $request->header(config('idempotency.idempotency_header')),
+        ), config('idempotency.cache_duration'));
 
         return $response;
     }
 
     protected function handleCachedResponse(string $cacheKey, Request $request)
     {
-        $cachedData = Cache::get($cacheKey);
-        if ($request->path() != $cachedData['path']) {
-            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedData['path'].').'));
+        $cachedValue = Cache::get($cacheKey);
+
+        if (! $cachedValue instanceof CachedResponseValue) {
+            if (is_array($cachedValue)) {
+                try {
+                    // Check for essential keys before attempting construction
+                    $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
+                    foreach ($requiredKeys as $key) {
+                        if (! array_key_exists($key, $cachedValue)) {
+                            throw new CorruptedCacheDataException(__("Legacy cached array is missing key: {$key}"));
+                        }
+                    }
+                    $cachedValue = new CachedResponseValue(
+                        $cachedValue['body'],
+                        $cachedValue['status'],
+                        $cachedValue['headers'],
+                        $cachedValue['path'],
+                        $cachedValue['originalKey']
+                    );
+                } catch (CorruptedCacheDataException $e) {
+                    throw $e;
+                }
+            } else {
+                // If it's not an array and not a CachedResponseValue, it's unexpected.
+                throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected CachedResponseValue or legacy array.'));
+            }
+        }
+        // By this point, $cachedValue is guaranteed to be a valid CachedResponseValue object
+        // because the constructor would have thrown an exception if validation failed.
+
+        if ($request->path() != $cachedValue->path) {
+            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedValue->path.').'));
         }
 
         // Config option to throw exception on duplicate?
@@ -133,9 +169,9 @@ class IdempotencyMiddleware
             throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
-        return response($cachedData['body'], $cachedData['status'])
-            ->withHeaders($cachedData['headers'])
-            ->header('Idempotency-Relayed', $cachedData['originalKey']);
+        return response($cachedValue->body, $cachedValue->status)
+            ->withHeaders($cachedValue->headers)
+            ->header('Idempotency-Relayed', $cachedValue->originalKey);
     }
 
     /**
