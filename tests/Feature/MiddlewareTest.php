@@ -314,4 +314,70 @@ class MiddlewareTest extends TestCase
             ->assertHeader('x-custom-header', 'legacy_value')
             ->assertHeader('Idempotency-Relayed', $key);
     }
+
+    #[Test]
+    public function it_handles_legacy_array_with_missing_keys()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'legacy-missing-keys';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        $legacyCachedData = [
+            'body' => json_encode(['message' => 'Hello from legacy cache']),
+            // Missing 'status', 'headers', 'path', 'originalKey'
+        ];
+
+        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'CorruptedCacheDataException']);
+    }
+
+    #[Test]
+    public function it_handles_legacy_array_with_invalid_status()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'legacy-invalid-status';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        $legacyCachedData = [
+            'body' => json_encode(['message' => 'Hello from legacy cache']),
+            'status' => -1, // Invalid status
+            'headers' => ['x-custom-header' => ['legacy_value']],
+            'path' => 'user',
+            'originalKey' => $key,
+        ];
+
+        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'InvalidCachedValueException']);
+    }
+
+    #[Test]
+    public function it_handles_legacy_array_with_empty_path()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'legacy-empty-path';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        $legacyCachedData = [
+            'body' => json_encode(['message' => 'Hello from legacy cache']),
+            'status' => Response::HTTP_OK,
+            'headers' => ['x-custom-header' => ['legacy_value']],
+            'path' => '', // Empty path
+            'originalKey' => $key,
+        ];
+
+        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'InvalidCachedValueException']);
+    }
 }

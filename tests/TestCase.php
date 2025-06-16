@@ -13,6 +13,7 @@ use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
 use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
 use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
+use Square1\LaravelIdempotency\Exceptions\InvalidCachedValueException;
 use Symfony\Component\HttpFoundation\Response;
 
 class TestCase extends OrchestraTestCase
@@ -89,7 +90,8 @@ class CustomExceptionHandler extends Handler
             || $e instanceof DuplicateRequestException
             || $e instanceof LockWaitExceededException
             || $e instanceof InvalidConfigurationException
-            || $e instanceof CorruptedCacheDataException) {
+            || $e instanceof CorruptedCacheDataException
+            || $e instanceof InvalidCachedValueException) {
             return response()->json([
                 'error' => $e->getMessage(),
                 'class' => class_basename($e),
