@@ -2,6 +2,6 @@
 
 namespace Square1\LaravelIdempotency\Exceptions;
 
-class InvalidArgumentException extends \Exception
+class InvalidCachedValueException extends \Exception
 {
 }

@@ -194,7 +194,7 @@ class MiddlewareTest extends TestCase
         $lockMock->shouldReceive('get')->andReturn(false);
         // Mock the cache facade
         Cache::shouldReceive('lock')
-            ->with($lockKey, config('idempotency.max_lock_wait_time'))
+            ->with($lockKey)
             ->andReturn($lockMock); // Simulate that the lock is present
 
         Cache::shouldReceive('has')
@@ -229,7 +229,7 @@ class MiddlewareTest extends TestCase
             ->andReturn(false);
         // Mock the cache facade
         Cache::shouldReceive('lock')
-            ->with($lockKey, config('idempotency.max_lock_wait_time'))
+            ->with($lockKey)
             ->andReturn($lockMock); // Simulate that the lock is present
 
         // Return false for first check, then on re-check, data is there

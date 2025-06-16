@@ -4,7 +4,7 @@ namespace Square1\LaravelIdempotency\Tests\Feature;
 
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
-use Square1\LaravelIdempotency\Exceptions\InvalidArgumentException;
+use Square1\LaravelIdempotency\Exceptions\InvalidCachedValueException;
 use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -45,25 +45,10 @@ class CachedResponseValueTest extends TestCase
     }
 
     #[Test]
-    public function it_throws_exception_for_empty_body()
-    {
-        $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('Cached response body cannot be empty.');
-
-        new CachedResponseValue(
-            '', // Empty body
-            Response::HTTP_OK,
-            ['Header' => 'Hi'],
-            'path',
-            'key'
-        );
-    }
-
-    #[Test]
     #[DataProvider('invalidStatusCodeProvider')]
     public function it_throws_exception_for_invalid_status_code(int $invalidStatus, string $expectedMessage)
     {
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(InvalidCachedValueException::class);
         $this->expectExceptionMessage($expectedMessage);
 
         new CachedResponseValue(
@@ -78,7 +63,7 @@ class CachedResponseValueTest extends TestCase
     #[Test]
     public function it_throws_exception_for_empty_path()
     {
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(InvalidCachedValueException::class);
         $this->expectExceptionMessage('Cached response path cannot be empty.');
 
         new CachedResponseValue(
@@ -93,7 +78,7 @@ class CachedResponseValueTest extends TestCase
     #[Test]
     public function it_throws_exception_for_empty_original_key()
     {
-        $this->expectException(InvalidArgumentException::class);
+        $this->expectException(InvalidCachedValueException::class);
         $this->expectExceptionMessage('Cached response original key cannot be empty.');
 
         new CachedResponseValue(

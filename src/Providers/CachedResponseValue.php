@@ -2,7 +2,7 @@
 
 namespace Square1\LaravelIdempotency\Providers;
 
-use Square1\LaravelIdempotency\Exceptions\InvalidArgumentException;
+use Square1\LaravelIdempotency\Exceptions\InvalidCachedValueException;
 
 readonly class CachedResponseValue
 {
@@ -13,19 +13,15 @@ readonly class CachedResponseValue
         public string $path,
         public string $originalKey
     ) {
-        if (empty($body)) {
-            throw new InvalidArgumentException('Cached response body cannot be empty.');
-        }
-
         if ($status < 1) {
-            throw new InvalidArgumentException('Invalid HTTP status code provided for cached response. Status: '.$status);
+            throw new InvalidCachedValueException('Invalid HTTP status code provided for cached response. Status: '.$status);
         }
 
         if (empty($path)) {
-            throw new InvalidArgumentException('Cached response path cannot be empty.');
+            throw new InvalidCachedValueException('Cached response path cannot be empty.');
         }
         if (empty($originalKey)) {
-            throw new InvalidArgumentException('Cached response original key cannot be empty.');
+            throw new InvalidCachedValueException('Cached response original key cannot be empty.');
         }
     }
 }

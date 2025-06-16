@@ -50,7 +50,7 @@ class IdempotencyMiddleware
             return $this->handleCachedResponse($cacheKey, $request);
         }
 
-        $lock = Cache::lock($this->buildLockKey($cacheKey), config('idempotency.max_lock_wait_time', 1));
+        $lock = Cache::lock($this->buildLockKey($cacheKey));
 
         if (! $lock->get()) {
             return $this->waitForCacheLock($cacheKey, $request);
