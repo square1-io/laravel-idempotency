@@ -6,6 +6,7 @@ use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Exceptions\Handler;
 use Illuminate\Support\Facades\Route;
 use Orchestra\Testbench\TestCase as OrchestraTestCase;
+use Square1\LaravelIdempotency\Exceptions\CorruptedCacheDataException;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
 use Square1\LaravelIdempotency\Exceptions\InvalidConfigurationException;
 use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
@@ -87,7 +88,8 @@ class CustomExceptionHandler extends Handler
             || $e instanceof MissingIdempotencyKeyException
             || $e instanceof DuplicateRequestException
             || $e instanceof LockWaitExceededException
-            || $e instanceof InvalidConfigurationException) {
+            || $e instanceof InvalidConfigurationException
+            || $e instanceof CorruptedCacheDataException) {
             return response()->json([
                 'error' => $e->getMessage(),
                 'class' => class_basename($e),

@@ -5,6 +5,7 @@ namespace Square1\LaravelIdempotency\Tests\Feature;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -15,10 +16,9 @@ class MiddlewareTest extends TestCase
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
-        $response = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'unique-key-123']);
-
-        $response->assertStatus(Response::HTTP_OK);
-        $response->assertJson(['id' => $user->id, 'field' => 'change']);
+        $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'unique-key-123'])
+            ->assertStatus(Response::HTTP_OK)
+            ->assertJson(['id' => $user->id, 'field' => 'change']);
     }
 
     #[Test]
@@ -27,11 +27,11 @@ class MiddlewareTest extends TestCase
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
         $idempotencyKey = 'unique-key-123';
-        $response = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => $idempotencyKey]);
-        $response->assertHeaderMissing('Idempotency-Relayed');
+        $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => $idempotencyKey])
+            ->assertHeaderMissing('Idempotency-Relayed');
 
-        $response = $this->post('/user', ['field' => 'change_again'], ['Idempotency-Key' => $idempotencyKey]);
-        $response->assertHeader('Idempotency-Relayed', $idempotencyKey);
+        $this->post('/user', ['field' => 'change_again'], ['Idempotency-Key' => $idempotencyKey])
+            ->assertHeader('Idempotency-Relayed', $idempotencyKey);
     }
 
     #[Test]
@@ -40,10 +40,9 @@ class MiddlewareTest extends TestCase
         // Ensure GET isn't in the set, then make a GET request.
         config(['idempotency.enforced_verbs' => 'POST']);
         $user = $this->getUnguardedUser(['field' => 'default']);
-        $this->actingAs($user);
-        $response = $this->get('/user');
-
-        $response->assertHeaderMissing('Idempotency-Relayed');
+        $this->actingAs($user)
+            ->get('/user')
+            ->assertHeaderMissing('Idempotency-Relayed');
     }
 
     #[Test]
@@ -83,11 +82,7 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertArrayHasKey('body', $cachedEntry);
-        $this->assertArrayHasKey('status', $cachedEntry);
-        $this->assertArrayHasKey('headers', $cachedEntry);
-        $this->assertArrayHasKey('originalKey', $cachedEntry);
-        $this->assertArrayHasKey('path', $cachedEntry);
+        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
     }
 
     #[Test]
@@ -97,9 +92,8 @@ class MiddlewareTest extends TestCase
         $this->actingAs($user);
         $key = 'unique-key-123';
         $this->post('/user', ['field' => 'changed'], ['Idempotency-Key' => $key]);
-        $response = $this->post('/account', ['field' => 'change-again'], ['Idempotency-Key' => $key]);
-
-        $response->assertStatus(Response::HTTP_BAD_REQUEST)
+        $this->post('/account', ['field' => 'change-again'], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
             ->assertJson(['class' => 'MismatchedPathException']);
     }
 
@@ -143,10 +137,9 @@ class MiddlewareTest extends TestCase
     {
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'unique-key-123';
-        $response = $this->post('/user', ['field' => 'changed']);
 
-        $response->assertStatus(Response::HTTP_BAD_REQUEST)
+        $this->post('/user', ['field' => 'changed'])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
             ->assertJson(['class' => 'MissingIdempotencyKeyException']);
     }
 
@@ -156,10 +149,8 @@ class MiddlewareTest extends TestCase
         config(['idempotency.ignore_empty_key' => true]);
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'unique-key-123';
-        $response = $this->post('/user', ['field' => 'changed']);
-
-        $response->assertStatus(Response::HTTP_OK);
+        $this->post('/user', ['field' => 'changed'])
+            ->assertStatus(Response::HTTP_OK);
     }
 
     #[Test]
@@ -172,10 +163,7 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertArrayHasKey('body', $cachedEntry);
-        $this->assertArrayHasKey('status', $cachedEntry);
-        $this->assertArrayHasKey('headers', $cachedEntry);
-        $this->assertArrayHasKey('path', $cachedEntry);
+        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
     }
 
     #[Test]
@@ -200,12 +188,13 @@ class MiddlewareTest extends TestCase
         config(['idempotency.max_lock_wait_time' => 2]);
         $key = 'unique-key-123';
         $cacheKey = 'idempotency:global:'.$key;
+        $lockKey = 'lock:'.$cacheKey;
 
         $lockMock = Mockery::mock();
         $lockMock->shouldReceive('get')->andReturn(false);
         // Mock the cache facade
         Cache::shouldReceive('lock')
-            ->with($cacheKey, config('idempotency.max_lock_wait_time'))
+            ->with($lockKey, config('idempotency.max_lock_wait_time'))
             ->andReturn($lockMock); // Simulate that the lock is present
 
         Cache::shouldReceive('has')
@@ -223,15 +212,16 @@ class MiddlewareTest extends TestCase
         config(['idempotency.max_lock_wait_time' => 3]);
         $key = 'unique-key-123';
         $cacheKey = 'idempotency:global:'.$key;
+        $lockKey = 'lock:'.$cacheKey;
 
         // Response that gets populated after first cache check failure
-        $cacheResponse = [
-            'body' => '{"status":"Hello"}',
-            'path' => 'account',
-            'headers' => ['Header' => 'Hi'],
-            'status' => 200,
-            'originalKey' => $key,
-        ];
+        $cacheResponse = new CachedResponseValue(
+            '{"status":"Hello"}',
+            200,
+            ['Header' => 'Hi'],
+            'account',
+            $key,
+        );
 
         $lockMock = Mockery::mock();
         $lockMock->shouldReceive('get')
@@ -239,7 +229,7 @@ class MiddlewareTest extends TestCase
             ->andReturn(false);
         // Mock the cache facade
         Cache::shouldReceive('lock')
-            ->with($cacheKey, config('idempotency.max_lock_wait_time'))
+            ->with($lockKey, config('idempotency.max_lock_wait_time'))
             ->andReturn($lockMock); // Simulate that the lock is present
 
         // Return false for first check, then on re-check, data is there
@@ -281,5 +271,47 @@ class MiddlewareTest extends TestCase
         $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => 'test-key'])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
             ->assertJson(['class' => 'InvalidConfigurationException']);
+    }
+
+    #[Test]
+    public function it_throws_corrupted_cache_data_exception_for_invalid_cached_object()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'corrupted-cache-key';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        // Manually put a string into the cache
+        Cache::put($cacheKey, 'this is not a valid cached object');
+
+        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
+            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertJson(['class' => 'CorruptedCacheDataException']);
+    }
+
+    #[Test]
+    public function it_handles_legacy_array_cache_format_successfully()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'legacy-array-key';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        $legacyCachedData = [
+            'body' => json_encode(['message' => 'Hello from legacy cache']),
+            'status' => Response::HTTP_OK,
+            'headers' => ['x-custom-header' => ['legacy_value']],
+            'path' => 'user',
+            'originalKey' => $key,
+        ];
+
+        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+
+        $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
+
+        $response->assertStatus(Response::HTTP_OK)
+            ->assertJson(['message' => 'Hello from legacy cache'])
+            ->assertHeader('x-custom-header', 'legacy_value')
+            ->assertHeader('Idempotency-Relayed', $key);
     }
 }

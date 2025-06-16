@@ -8,6 +8,7 @@
   </testsuites>
   <php>
     <env name="CACHE_DRIVER" value="array"/>
+    <env name="APP_DEBUG" value="true"/>
     <env name="DB_CONNECTION" value="sqlite"/>
     <env name="DB_DATABASE" value=":memory:"/>
   </php>

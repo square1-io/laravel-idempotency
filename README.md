@@ -164,6 +164,7 @@ This package potentially throws a number of exceptions, all under the `Square1\L
 * `DuplicateRequestException`: By default the package will replay a response when a previous idempotency key is seen again. Changing the config value `on_duplicate_behaviour` to `exception` will cause an exception to be thrown instead (useful for applications when a re-sent request is more likely a bug in the client).
 * `LockExceededException`: To avoid race conditions for two requests with identical keys, each request that doesn't see a cached response already present first tries to acquire a cache lock. Only one request can get this lock, so the losing request(s) will poll the cache periodically to get the response. If the waiting time exceeds the value in `config('idempotency.max_lock_wait_time')`, a `LockExceededException` exception is thrown.
 * `MissingIdempotencyKeyException`: Thrown when a request handled by the idempotency middleware does not have a key present. This check is performed after the `enforced_verbs` check, so, for example, if GET requests are not to be considered by the middleware, a GET request without a key won't trigger this exception. This exception will be thrown, unless the config value `ignore_empty_key` has been changed to `true`.
+* `CorruptedCacheDataException`: Data retrieved from the cache does not match the expected format. Typically the result of a cache key collision with the hosting application.
 
 
 ## Versioning
