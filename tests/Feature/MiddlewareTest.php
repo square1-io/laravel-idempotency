@@ -5,6 +5,7 @@ namespace Square1\LaravelIdempotency\Tests\Feature;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use Illuminate\Http\Request;
 use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -159,7 +160,7 @@ class MiddlewareTest extends TestCase
         $key = 'unique-key-123';
         $this->post('/account', [], ['Idempotency-Key' => $key]);
 
-        $cacheKey = 'idempotency:global:'.$key;
+        $cacheKey = $this->getCacheKey($key);
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
@@ -187,7 +188,7 @@ class MiddlewareTest extends TestCase
     {
         config(['idempotency.max_lock_wait_time' => 2]);
         $key = 'unique-key-123';
-        $cacheKey = 'idempotency:global:'.$key;
+        $cacheKey = $this->getCacheKey($key);
         $lockKey = 'lock:'.$cacheKey;
 
         $lockMock = Mockery::mock();
@@ -211,7 +212,7 @@ class MiddlewareTest extends TestCase
     {
         config(['idempotency.max_lock_wait_time' => 3]);
         $key = 'unique-key-123';
-        $cacheKey = 'idempotency:global:'.$key;
+        $cacheKey = $this->getCacheKey($key);
         $lockKey = 'lock:'.$cacheKey;
 
         // Response that gets populated after first cache check failure
@@ -379,5 +380,13 @@ class MiddlewareTest extends TestCase
         $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
             ->assertJson(['class' => 'InvalidCachedValueException']);
+    }
+
+    private function getCacheKey(string $key)
+    {
+        $request = app(Request::class);
+        $ipAddress = request()->ip();
+
+        return "idempotency:{$ipAddress}:{$key}";
     }
 }
