@@ -36,13 +36,8 @@ class IdempotencyMiddleware
         }
 
         // Get the user ID resolver from the configuration.
-        // If not set, use a default closure that returns the authenticated user's ID.
-        $userIdResolver = config('idempotency.user_id_resolver', function () {
-            return auth()->check() ? auth()->user()->id : null;
-        });
-
-        // Invoke the resolver to get the user ID.
-        $userId = $userIdResolver instanceof Closure ? $userIdResolver() : $this->resolveUserIdFromConfig($userIdResolver);
+        // If not set, then either returns the authenticated user's ID or request ip.
+        $userId = $this->resolveUserIdFromConfig(config('idempotency.user_id_resolver'), $request);
 
         $cacheKey = $this->buildCacheKey($userId, $idempotencyKey);
 
@@ -90,7 +85,7 @@ class IdempotencyMiddleware
      * @param  mixed  $userIdResolver
      * @return mixed
      */
-    protected function resolveUserIdFromConfig($userIdResolver)
+    protected function resolveUserIdFromConfig($userIdResolver, Request $request)
     {
         if (is_array($userIdResolver) && count($userIdResolver) === 2) {
             // Assuming the configuration is in the format [ClassName::class, 'methodName']
@@ -100,7 +95,7 @@ class IdempotencyMiddleware
         }
 
         // Default to authenticated user's ID if the configuration is not a valid callable
-        return auth()->check() ? auth()->user()->id : 'global';
+        return auth()->check() ? auth()->user()->id : $request->ip();
     }
 
     protected function buildCacheKey(string $userId, string $idempotencyKey): string
