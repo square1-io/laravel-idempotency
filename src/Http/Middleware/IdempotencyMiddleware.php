@@ -83,6 +83,7 @@ class IdempotencyMiddleware
      * Resolve the user ID from a config value if it's not a closure.
      *
      * @param  mixed  $userIdResolver
+     * @param  \Illuminate\Http\Request  $request
      * @return mixed
      */
     protected function resolveUserIdFromConfig($userIdResolver, Request $request)
