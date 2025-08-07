@@ -18,6 +18,7 @@ This package makes it easy to add support for [idempotency](https://en.wikipedia
 | [Versioning](#versioning) |
 | [Tests](#tests) |
 | [License](#license) |
+| [Further Reading](#further-reading) |
 
 ## What is Idempotency?
 Idempotency is the name given to the ability to make multiple identical requests, and only have the changes applied once. By adding a unique key to each incoming request, the server can detect a repeated request. If it has not seen that request before, the server can safely process it. If the key has been seen previously, the server can return the previous response, without re-processing the request. This is particularly useful if there are API clients operating with unreliable network conditions, where requests get automatically re-tried once a connection is re-established.
@@ -186,3 +187,9 @@ $ composer test
 ## License
 
 The MIT License (MIT). Please see [License File](LICENSE.md) for more information.
+
+## Further Reading
+* [Avoiding Déjà Vu: Building Resilient APIs with Idempotency](https://www.conroyp.com/articles/avoiding-deja-vu-building-resilient-apis-with-idempotency)
+* [Designing Robust and Predictable APIs with Idempotency (Stripe)](https://stripe.com/blog/idempotency)
+* [Making retries safe with idempotent APIs (AWS)](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/)
+
