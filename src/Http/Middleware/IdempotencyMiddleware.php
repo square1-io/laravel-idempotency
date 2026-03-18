@@ -128,46 +128,38 @@ class IdempotencyMiddleware
     {
         $cachedValue = Cache::get($cacheKey);
 
-        if (! $cachedValue instanceof CachedResponseValue) {
-            if (is_array($cachedValue)) {
-                try {
-                    // Check for essential keys before attempting construction
-                    $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
-                    foreach ($requiredKeys as $key) {
-                        if (! array_key_exists($key, $cachedValue)) {
-                            throw new CorruptedCacheDataException(__("Legacy cached array is missing key: {$key}"));
-                        }
-                    }
-                    $cachedValue = new CachedResponseValue(
-                        $cachedValue['body'],
-                        $cachedValue['status'],
-                        $cachedValue['headers'],
-                        $cachedValue['path'],
-                        $cachedValue['originalKey']
-                    );
-                } catch (CorruptedCacheDataException $e) {
-                    throw $e;
-                }
-            } else {
-                // If it's not an array and not a CachedResponseValue, it's unexpected.
-                throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected CachedResponseValue or legacy array.'));
+        if (! is_array($cachedValue)) {
+            throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected array.'));
+        }
+
+        // Validate that all required keys are present
+        $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
+        foreach ($requiredKeys as $key) {
+            if (! array_key_exists($key, $cachedValue)) {
+                throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
             }
         }
-        // By this point, $cachedValue is guaranteed to be a valid CachedResponseValue object
-        // because the constructor would have thrown an exception if validation failed.
 
-        if ($request->path() != $cachedValue->path) {
-            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedValue->path.').'));
+        // Construct a validated response object from the cached array
+        $cached = new CachedResponseValue(
+            $cachedValue['body'],
+            $cachedValue['status'],
+            $cachedValue['headers'],
+            $cachedValue['path'],
+            $cachedValue['originalKey']
+        );
+
+        if ($request->path() != $cached->path) {
+            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cached->path.').'));
         }
 
-        // Config option to throw exception on duplicate?
         if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION->value) {
             throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
-        return response($cachedValue->body, $cachedValue->status)
-            ->withHeaders($cachedValue->headers)
-            ->header('Idempotency-Relayed', $cachedValue->originalKey);
+        return response($cached->body, $cached->status)
+            ->withHeaders($cached->headers)
+            ->header('Idempotency-Relayed', $cached->originalKey);
     }
 
     /**
