@@ -6,7 +6,6 @@ use Illuminate\Support\Facades\Cache;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Illuminate\Http\Request;
-use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -83,7 +82,12 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
+        $this->assertIsArray($cachedEntry);
+        $this->assertArrayHasKey('body', $cachedEntry);
+        $this->assertArrayHasKey('status', $cachedEntry);
+        $this->assertArrayHasKey('headers', $cachedEntry);
+        $this->assertArrayHasKey('path', $cachedEntry);
+        $this->assertArrayHasKey('originalKey', $cachedEntry);
     }
 
     #[Test]
@@ -164,7 +168,8 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
+        $this->assertIsArray($cachedEntry);
+        $this->assertArrayHasKey('body', $cachedEntry);
     }
 
     #[Test]
@@ -216,13 +221,13 @@ class MiddlewareTest extends TestCase
         $lockKey = 'lock:'.$cacheKey;
 
         // Response that gets populated after first cache check failure
-        $cacheResponse = new CachedResponseValue(
-            '{"status":"Hello"}',
-            200,
-            ['Header' => 'Hi'],
-            'account',
-            $key,
-        );
+        $cacheResponse = [
+            'body' => '{"status":"Hello"}',
+            'status' => 200,
+            'headers' => ['Header' => 'Hi'],
+            'path' => 'account',
+            'originalKey' => $key,
+        ];
 
         $lockMock = Mockery::mock();
         $lockMock->shouldReceive('get')

@@ -113,13 +113,13 @@ class IdempotencyMiddleware
     {
         $response = $next($request);
 
-        Cache::put($cacheKey, new CachedResponseValue(
-            $response->getContent(),
-            $response->getStatusCode(),
-            $response->headers->all(),
-            $request->path(),
-            $request->header(config('idempotency.idempotency_header')),
-        ), config('idempotency.cache_duration'));
+        Cache::put($cacheKey, [
+            'body' => $response->getContent(),
+            'status' => $response->getStatusCode(),
+            'headers' => $response->headers->all(),
+            'path' => $request->path(),
+            'originalKey' => $request->header(config('idempotency.idempotency_header')),
+        ], config('idempotency.cache_duration'));
 
         return $response;
     }
