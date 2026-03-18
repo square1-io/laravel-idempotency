@@ -120,7 +120,7 @@ use Square1\LaravelIdempotency\Http\Middleware\IdempotencyMiddleware;
 })
 ```
 
-The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 12, please see [the docs](https://laravel.com/docs/12.x/middleware#global-middleware).
+The `append` function here will add this middleware to the end of the global middlewares in your application. For more on handling middleware ordering in Laravel 12, please see [the docs](https://laravel.com/docs/13.x/middleware#global-middleware).
 
 
 This will run the middleware on all of the routes in the application. However, the `enforced_verbs` value in the package configuration will control whether the middleware has any impact on a given route (by default the middleware won't interfere with GET or HEAD requests).
@@ -128,7 +128,7 @@ This will run the middleware on all of the routes in the application. However, t
 ### Specific Routes
 Alternatively, it can be targeted to specific routes.
 
-You may append the middleware to all api routes, taking advantage of Laravel's [default middleware groups](https://laravel.com/docs/11.x/middleware#laravels-default-middleware-groups):
+You may append the middleware to all api routes, taking advantage of Laravel's [default middleware groups](https://laravel.com/docs/13.x/middleware#laravels-default-middleware-groups):
 
 ``` php
 // bootstrap/app.php
@@ -174,6 +174,7 @@ With the release of Laravel 12 support, the package versioning scheme changed to
 
 | Package Version | Laravel Version(s) |
 |-----------------|--------------------|
+| 13.*            | 13, 12             |
 | 12.*            | 12, 11             |
 | 2.0.0           | 11, 10, 9          |
 | 1.*             | 10,9               |

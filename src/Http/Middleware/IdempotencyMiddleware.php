@@ -113,13 +113,13 @@ class IdempotencyMiddleware
     {
         $response = $next($request);
 
-        Cache::put($cacheKey, new CachedResponseValue(
-            $response->getContent(),
-            $response->getStatusCode(),
-            $response->headers->all(),
-            $request->path(),
-            $request->header(config('idempotency.idempotency_header')),
-        ), config('idempotency.cache_duration'));
+        Cache::put($cacheKey, [
+            'body' => $response->getContent(),
+            'status' => $response->getStatusCode(),
+            'headers' => $response->headers->all(),
+            'path' => $request->path(),
+            'originalKey' => $request->header(config('idempotency.idempotency_header')),
+        ], config('idempotency.cache_duration'));
 
         return $response;
     }
@@ -128,46 +128,40 @@ class IdempotencyMiddleware
     {
         $cachedValue = Cache::get($cacheKey);
 
-        if (! $cachedValue instanceof CachedResponseValue) {
-            if (is_array($cachedValue)) {
-                try {
-                    // Check for essential keys before attempting construction
-                    $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
-                    foreach ($requiredKeys as $key) {
-                        if (! array_key_exists($key, $cachedValue)) {
-                            throw new CorruptedCacheDataException(__("Legacy cached array is missing key: {$key}"));
-                        }
-                    }
-                    $cachedValue = new CachedResponseValue(
-                        $cachedValue['body'],
-                        $cachedValue['status'],
-                        $cachedValue['headers'],
-                        $cachedValue['path'],
-                        $cachedValue['originalKey']
-                    );
-                } catch (CorruptedCacheDataException $e) {
-                    throw $e;
+        // Support CachedResponseValue objects still in cache from prior package versions
+        if ($cachedValue instanceof CachedResponseValue) {
+            $cached = $cachedValue;
+        } elseif (is_array($cachedValue)) {
+            // Validate that all required keys are present
+            $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
+            foreach ($requiredKeys as $key) {
+                if (! array_key_exists($key, $cachedValue)) {
+                    throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
                 }
-            } else {
-                // If it's not an array and not a CachedResponseValue, it's unexpected.
-                throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected CachedResponseValue or legacy array.'));
             }
-        }
-        // By this point, $cachedValue is guaranteed to be a valid CachedResponseValue object
-        // because the constructor would have thrown an exception if validation failed.
 
-        if ($request->path() != $cachedValue->path) {
-            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cachedValue->path.').'));
+            $cached = new CachedResponseValue(
+                $cachedValue['body'],
+                $cachedValue['status'],
+                $cachedValue['headers'],
+                $cachedValue['path'],
+                $cachedValue['originalKey']
+            );
+        } else {
+            throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected array.'));
         }
 
-        // Config option to throw exception on duplicate?
+        if ($request->path() != $cached->path) {
+            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cached->path.').'));
+        }
+
         if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION->value) {
             throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
-        return response($cachedValue->body, $cachedValue->status)
-            ->withHeaders($cachedValue->headers)
-            ->header('Idempotency-Relayed', $cachedValue->originalKey);
+        return response($cached->body, $cached->status)
+            ->withHeaders($cached->headers)
+            ->header('Idempotency-Relayed', $cached->originalKey);
     }
 
     /**

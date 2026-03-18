@@ -6,7 +6,6 @@ use Illuminate\Support\Facades\Cache;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Illuminate\Http\Request;
-use Square1\LaravelIdempotency\Providers\CachedResponseValue;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -83,7 +82,12 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
+        $this->assertIsArray($cachedEntry);
+        $this->assertArrayHasKey('body', $cachedEntry);
+        $this->assertArrayHasKey('status', $cachedEntry);
+        $this->assertArrayHasKey('headers', $cachedEntry);
+        $this->assertArrayHasKey('path', $cachedEntry);
+        $this->assertArrayHasKey('originalKey', $cachedEntry);
     }
 
     #[Test]
@@ -164,7 +168,8 @@ class MiddlewareTest extends TestCase
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);
-        $this->assertInstanceOf(CachedResponseValue::class, $cachedEntry);
+        $this->assertIsArray($cachedEntry);
+        $this->assertArrayHasKey('body', $cachedEntry);
     }
 
     #[Test]
@@ -216,13 +221,13 @@ class MiddlewareTest extends TestCase
         $lockKey = 'lock:'.$cacheKey;
 
         // Response that gets populated after first cache check failure
-        $cacheResponse = new CachedResponseValue(
-            '{"status":"Hello"}',
-            200,
-            ['Header' => 'Hi'],
-            'account',
-            $key,
-        );
+        $cacheResponse = [
+            'body' => '{"status":"Hello"}',
+            'status' => 200,
+            'headers' => ['Header' => 'Hi'],
+            'path' => 'account',
+            'originalKey' => $key,
+        ];
 
         $lockMock = Mockery::mock();
         $lockMock->shouldReceive('get')
@@ -291,45 +296,72 @@ class MiddlewareTest extends TestCase
     }
 
     #[Test]
-    public function it_handles_legacy_array_cache_format_successfully()
+    public function it_handles_cached_object_from_prior_package_version()
     {
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'legacy-array-key';
+        $key = 'object-cache-key';
         $cacheKey = 'idempotency:'.$user->id.':'.$key;
 
-        $legacyCachedData = [
-            'body' => json_encode(['message' => 'Hello from legacy cache']),
+        // Simulate a CachedResponseValue object left in cache from a prior package version
+        $cachedObject = new \Square1\LaravelIdempotency\Providers\CachedResponseValue(
+            json_encode(['message' => 'Hello from object cache']),
+            Response::HTTP_OK,
+            ['x-custom-header' => ['object_value']],
+            'user',
+            $key,
+        );
+
+        Cache::put($cacheKey, $cachedObject, config('idempotency.cache_duration'));
+
+        $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
+
+        $response->assertStatus(Response::HTTP_OK)
+            ->assertJson(['message' => 'Hello from object cache'])
+            ->assertHeader('x-custom-header', 'object_value')
+            ->assertHeader('Idempotency-Relayed', $key);
+    }
+
+    #[Test]
+    public function it_handles_array_cache_format_successfully()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'array-key';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        $cachedData = [
+            'body' => json_encode(['message' => 'Hello from cache']),
             'status' => Response::HTTP_OK,
             'headers' => ['x-custom-header' => ['legacy_value']],
             'path' => 'user',
             'originalKey' => $key,
         ];
 
-        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
 
         $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
 
         $response->assertStatus(Response::HTTP_OK)
-            ->assertJson(['message' => 'Hello from legacy cache'])
+            ->assertJson(['message' => 'Hello from cache'])
             ->assertHeader('x-custom-header', 'legacy_value')
             ->assertHeader('Idempotency-Relayed', $key);
     }
 
     #[Test]
-    public function it_handles_legacy_array_with_missing_keys()
+    public function it_handles_array_with_missing_keys()
     {
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'legacy-missing-keys';
+        $key = 'missing-keys';
         $cacheKey = 'idempotency:'.$user->id.':'.$key;
 
-        $legacyCachedData = [
-            'body' => json_encode(['message' => 'Hello from legacy cache']),
-            // Missing 'status', 'headers', 'path', 'originalKey'
+        $cachedData = [
+            'body' => json_encode(['message' => 'Hello from cache']),
+            // Missing required keys: 'status', 'headers', 'path', 'originalKey'
         ];
 
-        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
 
         $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
@@ -337,22 +369,22 @@ class MiddlewareTest extends TestCase
     }
 
     #[Test]
-    public function it_handles_legacy_array_with_invalid_status()
+    public function it_handles_array_with_invalid_status()
     {
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'legacy-invalid-status';
+        $key = 'invalid-status';
         $cacheKey = 'idempotency:'.$user->id.':'.$key;
 
-        $legacyCachedData = [
-            'body' => json_encode(['message' => 'Hello from legacy cache']),
+        $cachedData = [
+            'body' => json_encode(['message' => 'Hello from cache']),
             'status' => -1, // Invalid status
             'headers' => ['x-custom-header' => ['legacy_value']],
             'path' => 'user',
             'originalKey' => $key,
         ];
 
-        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
 
         $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
@@ -360,22 +392,22 @@ class MiddlewareTest extends TestCase
     }
 
     #[Test]
-    public function it_handles_legacy_array_with_empty_path()
+    public function it_handles_array_with_empty_path()
     {
         $user = $this->getUnguardedUser();
         $this->actingAs($user);
-        $key = 'legacy-empty-path';
+        $key = 'empty-path';
         $cacheKey = 'idempotency:'.$user->id.':'.$key;
 
-        $legacyCachedData = [
-            'body' => json_encode(['message' => 'Hello from legacy cache']),
+        $cachedData = [
+            'body' => json_encode(['message' => 'Hello from cache']),
             'status' => Response::HTTP_OK,
             'headers' => ['x-custom-header' => ['legacy_value']],
             'path' => '', // Empty path
             'originalKey' => $key,
         ];
 
-        Cache::put($cacheKey, $legacyCachedData, config('idempotency.cache_duration'));
+        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
 
         $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
             ->assertStatus(Response::HTTP_BAD_REQUEST)
