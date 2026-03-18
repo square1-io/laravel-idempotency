@@ -296,6 +296,33 @@ class MiddlewareTest extends TestCase
     }
 
     #[Test]
+    public function it_handles_cached_object_from_prior_package_version()
+    {
+        $user = $this->getUnguardedUser();
+        $this->actingAs($user);
+        $key = 'object-cache-key';
+        $cacheKey = 'idempotency:'.$user->id.':'.$key;
+
+        // Simulate a CachedResponseValue object left in cache from a prior package version
+        $cachedObject = new \Square1\LaravelIdempotency\Providers\CachedResponseValue(
+            json_encode(['message' => 'Hello from object cache']),
+            Response::HTTP_OK,
+            ['x-custom-header' => ['object_value']],
+            'user',
+            $key,
+        );
+
+        Cache::put($cacheKey, $cachedObject, config('idempotency.cache_duration'));
+
+        $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
+
+        $response->assertStatus(Response::HTTP_OK)
+            ->assertJson(['message' => 'Hello from object cache'])
+            ->assertHeader('x-custom-header', 'object_value')
+            ->assertHeader('Idempotency-Relayed', $key);
+    }
+
+    #[Test]
     public function it_handles_array_cache_format_successfully()
     {
         $user = $this->getUnguardedUser();

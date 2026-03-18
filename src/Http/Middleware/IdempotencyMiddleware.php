@@ -128,26 +128,28 @@ class IdempotencyMiddleware
     {
         $cachedValue = Cache::get($cacheKey);
 
-        if (! is_array($cachedValue)) {
+        // Support CachedResponseValue objects still in cache from prior package versions
+        if ($cachedValue instanceof CachedResponseValue) {
+            $cached = $cachedValue;
+        } elseif (is_array($cachedValue)) {
+            // Validate that all required keys are present
+            $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
+            foreach ($requiredKeys as $key) {
+                if (! array_key_exists($key, $cachedValue)) {
+                    throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
+                }
+            }
+
+            $cached = new CachedResponseValue(
+                $cachedValue['body'],
+                $cachedValue['status'],
+                $cachedValue['headers'],
+                $cachedValue['path'],
+                $cachedValue['originalKey']
+            );
+        } else {
             throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected array.'));
         }
-
-        // Validate that all required keys are present
-        $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
-        foreach ($requiredKeys as $key) {
-            if (! array_key_exists($key, $cachedValue)) {
-                throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
-            }
-        }
-
-        // Construct a validated response object from the cached array
-        $cached = new CachedResponseValue(
-            $cachedValue['body'],
-            $cachedValue['status'],
-            $cachedValue['headers'],
-            $cachedValue['path'],
-            $cachedValue['originalKey']
-        );
 
         if ($request->path() != $cached->path) {
             throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cached->path.').'));
