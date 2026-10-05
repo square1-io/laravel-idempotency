@@ -2,423 +2,509 @@
 
 namespace Square1\LaravelIdempotency\Tests\Feature;
 
-use Illuminate\Support\Facades\Cache;
-use Mockery;
-use PHPUnit\Framework\Attributes\Test;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Cache;
+use PHPUnit\Framework\Attributes\Test;
+use Square1\LaravelIdempotency\Enums\DuplicateBehaviour;
+use Square1\LaravelIdempotency\Support\RequestFingerprint;
 use Square1\LaravelIdempotency\Tests\TestCase;
 use Symfony\Component\HttpFoundation\Response;
 
 class MiddlewareTest extends TestCase
 {
     #[Test]
-    public function it_handles_requests_with_idempotency_key()
+    public function it_handles_requests_with_an_idempotency_key(): void
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
-        $this->actingAs($user);
-        $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'unique-key-123'])
-            ->assertStatus(Response::HTTP_OK)
+
+        $this->actingAs($user)
+            ->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'unique-key-123'])
+            ->assertOk()
             ->assertJson(['id' => $user->id, 'field' => 'change']);
     }
 
     #[Test]
-    public function idempotency_header_only_appears_on_repeated_request()
+    public function it_replays_an_identical_request_without_executing_it_again(): void
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
-        $idempotencyKey = 'unique-key-123';
-        $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => $idempotencyKey])
-            ->assertHeaderMissing('Idempotency-Relayed');
 
-        $this->post('/user', ['field' => 'change_again'], ['Idempotency-Key' => $idempotencyKey])
-            ->assertHeader('Idempotency-Relayed', $idempotencyKey);
+        $first = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'same-request']);
+        $second = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => 'same-request']);
+
+        $first->assertOk()->assertHeaderMissing('Idempotency-Replayed');
+        $second->assertOk()->assertHeader('Idempotency-Replayed', 'same-request');
+        $this->assertSame($first->getContent(), $second->getContent());
+        $this->assertSame(1, $this->controllerExecutionCount);
     }
 
     #[Test]
-    public function idempotency_header_missing_on_non_applicable_requests()
-    {
-        // Ensure GET isn't in the set, then make a GET request.
-        config(['idempotency.enforced_verbs' => 'POST']);
-        $user = $this->getUnguardedUser(['field' => 'default']);
-        $this->actingAs($user)
-            ->get('/user')
-            ->assertHeaderMissing('Idempotency-Relayed');
-    }
-
-    #[Test]
-    public function different_users_get_different_responses_for_same_idempotency_key()
-    {
-        $key = 'same-key-for-both-users';
-
-        $user1 = $this->getUnguardedUser();
-        $this->actingAs($user1);
-        $firstResponse = $this->post(
-            '/user',
-            ['field' => 'change'],
-            ['Idempotency-Key' => $key]
-        );
-
-        // Simulate the second user
-        $user2 = $this->getUnguardedUser(['id' => 2, 'field' => 'different']);
-        $this->actingAs($user2);
-        $secondResponse = $this->post(
-            '/user',
-            ['field' => 'other_stuff'],
-            ['Idempotency-Key' => $key]
-        );
-
-        $this->assertNotEquals($firstResponse->getContent(), $secondResponse->getContent());
-    }
-
-    #[Test]
-    public function idempotency_key_creates_cache_entry()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'unique-key-123';
-        $this->post('/user', ['data' => 'value'], ['Idempotency-Key' => $key]);
-
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-        $this->assertTrue(Cache::has($cacheKey));
-
-        $cachedEntry = Cache::get($cacheKey);
-        $this->assertIsArray($cachedEntry);
-        $this->assertArrayHasKey('body', $cachedEntry);
-        $this->assertArrayHasKey('status', $cachedEntry);
-        $this->assertArrayHasKey('headers', $cachedEntry);
-        $this->assertArrayHasKey('path', $cachedEntry);
-        $this->assertArrayHasKey('originalKey', $cachedEntry);
-    }
-
-    #[Test]
-    public function using_same_idempotency_key_with_different_path_throws_exception()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'unique-key-123';
-        $this->post('/user', ['field' => 'changed'], ['Idempotency-Key' => $key]);
-        $this->post('/account', ['field' => 'change-again'], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'MismatchedPathException']);
-    }
-
-    #[Test]
-    public function same_idempotency_key_returns_same_response_and_does_not_duplicate_change()
+    public function it_rejects_the_same_key_with_a_different_payload(): void
     {
         $user = $this->getUnguardedUser(['field' => 'default']);
         $this->actingAs($user);
-        $key = 'unique-key-123';
+        $headers = ['Idempotency-Key' => 'changed-payload'];
 
-        $firstResponse = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => $key]);
-        $secondResponse = $this->post('/user', ['field' => 'should not change'], ['Idempotency-Key' => $key]);
+        $this->post('/user', ['field' => 'first'], $headers)->assertOk();
+        $this->post('/user', ['field' => 'second'], $headers)
+            ->assertStatus(Response::HTTP_UNPROCESSABLE_ENTITY)
+            ->assertJson(['class' => 'MismatchedRequestException']);
 
-        $firstResponse->assertStatus(Response::HTTP_OK);
-        $secondResponse->assertStatus(Response::HTTP_OK);
-        $this->assertEquals($firstResponse->getContent(), $secondResponse->getContent());
-        $this->assertEquals('change', auth()->user()->field);
+        $this->assertSame('first', $user->field);
+        $this->assertSame(1, $this->controllerExecutionCount);
     }
 
     #[Test]
-    public function idempotency_key_header_name_can_be_changed_in_config()
+    public function it_rejects_the_same_key_with_a_different_query_string(): void
     {
-        $customHeader = 'X-Custom-Key';
-        config(['idempotency.idempotency_header' => $customHeader]);
+        $headers = ['Idempotency-Key' => 'changed-query'];
 
-        $user = $this->getUnguardedUser(['field' => 'default']);
-        $this->actingAs($user);
-        $key = 'unique-key-123';
-
-        $firstResponse = $this->post('/user', ['field' => 'change'], [$customHeader => $key]);
-        $secondResponse = $this->post('/user', ['field' => 'should not change'], [$customHeader => $key]);
-
-        $firstResponse->assertStatus(Response::HTTP_OK);
-        $secondResponse->assertStatus(Response::HTTP_OK);
-        $this->assertEquals($firstResponse->getContent(), $secondResponse->getContent());
-        $this->assertEquals('change', auth()->user()->field);
+        $this->post('/account?mode=one', ['item' => 'book'], $headers)->assertOk();
+        $this->post('/account?mode=two', ['item' => 'book'], $headers)
+            ->assertStatus(Response::HTTP_UNPROCESSABLE_ENTITY)
+            ->assertJson(['class' => 'MismatchedRequestException']);
     }
 
     #[Test]
-    public function missing_idempotency_key_causes_exception()
+    public function query_parameter_order_does_not_change_the_fingerprint(): void
     {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
+        $headers = ['Idempotency-Key' => 'query-order'];
 
-        $this->post('/user', ['field' => 'changed'])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
+        $this->post('/account?one=1&two=2', ['item' => 'book'], $headers)->assertOk();
+        $this->post('/account?two=2&one=1', ['item' => 'book'], $headers)
+            ->assertOk()
+            ->assertHeader('Idempotency-Replayed', 'query-order');
+    }
+
+    #[Test]
+    public function json_object_key_order_does_not_change_the_fingerprint(): void
+    {
+        $headers = ['Idempotency-Key' => 'json-order'];
+
+        $this->postJson('/account', ['one' => 1, 'two' => 2], $headers)->assertOk();
+        $this->postJson('/account', ['two' => 2, 'one' => 1], $headers)
+            ->assertOk()
+            ->assertHeader('Idempotency-Replayed', 'json-order');
+    }
+
+    #[Test]
+    public function it_rejects_reusing_a_key_with_a_different_method(): void
+    {
+        $headers = ['Idempotency-Key' => 'changed-method'];
+        $payload = ['item' => 'book'];
+
+        $this->post('/account', $payload, $headers)->assertOk();
+        $this->put('/account', $payload, $headers)
+            ->assertStatus(Response::HTTP_UNPROCESSABLE_ENTITY)
+            ->assertJson(['class' => 'MismatchedRequestException']);
+    }
+
+    #[Test]
+    public function uploaded_file_contents_are_part_of_the_fingerprint(): void
+    {
+        $headers = ['Idempotency-Key' => 'changed-upload'];
+
+        $this->post('/upload', [
+            'document' => UploadedFile::fake()->createWithContent('document.txt', 'first'),
+        ], $headers)->assertOk();
+
+        $this->post('/upload', [
+            'document' => UploadedFile::fake()->createWithContent('document.txt', 'second'),
+        ], $headers)
+            ->assertStatus(Response::HTTP_UNPROCESSABLE_ENTITY)
+            ->assertJson(['class' => 'MismatchedRequestException']);
+
+        $this->assertSame(1, $this->controllerExecutionCount);
+    }
+
+    #[Test]
+    public function it_rejects_reusing_a_key_on_a_different_path(): void
+    {
+        $headers = ['Idempotency-Key' => 'changed-path'];
+
+        $this->post('/account', [], $headers)->assertOk();
+        $this->post('/other-account', [], $headers)
+            ->assertStatus(Response::HTTP_UNPROCESSABLE_ENTITY)
+            ->assertJson(['class' => 'MismatchedRequestException']);
+    }
+
+    #[Test]
+    public function different_users_can_use_the_same_key(): void
+    {
+        $headers = ['Idempotency-Key' => 'same-key-for-users'];
+        $payload = ['item' => 'book'];
+
+        $firstUser = $this->getUnguardedUser(['id' => 1]);
+        $first = $this->actingAs($firstUser)->post('/account', $payload, $headers);
+
+        $secondUser = $this->getUnguardedUser(['id' => 2]);
+        $second = $this->actingAs($secondUser)->post('/account', $payload, $headers);
+
+        $first->assertJson(['user_id' => 1]);
+        $second->assertJson(['user_id' => 2])->assertHeaderMissing('Idempotency-Replayed');
+        $this->assertSame(2, $this->controllerExecutionCount);
+    }
+
+    #[Test]
+    public function global_scope_shares_keys_between_users(): void
+    {
+        config(['idempotency.scope' => 'global']);
+        $headers = ['Idempotency-Key' => 'global-key'];
+        $payload = ['item' => 'book'];
+
+        $firstUser = $this->getUnguardedUser(['id' => 1]);
+        $this->actingAs($firstUser)->post('/account', $payload, $headers)->assertJson(['user_id' => 1]);
+
+        $secondUser = $this->getUnguardedUser(['id' => 2]);
+        $this->actingAs($secondUser)->post('/account', $payload, $headers)
+            ->assertJson(['user_id' => 1])
+            ->assertHeader('Idempotency-Replayed', 'global-key');
+    }
+
+    #[Test]
+    public function ip_scope_is_available_explicitly(): void
+    {
+        config(['idempotency.scope' => 'ip']);
+        $headers = ['Idempotency-Key' => 'ip-key'];
+
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.1'])
+            ->post('/account', [], $headers)
+            ->assertOk();
+
+        $this->withServerVariables(['REMOTE_ADDR' => '192.0.2.2'])
+            ->post('/account', [], $headers)
+            ->assertOk()
+            ->assertHeaderMissing('Idempotency-Replayed');
+
+        $this->assertSame(2, $this->controllerExecutionCount);
+    }
+
+    #[Test]
+    public function missing_keys_return_bad_request(): void
+    {
+        $this->post('/account')
+            ->assertBadRequest()
             ->assertJson(['class' => 'MissingIdempotencyKeyException']);
     }
 
     #[Test]
-    public function config_change_allows_missing_idempotency_key()
+    public function missing_keys_can_be_ignored(): void
     {
         config(['idempotency.ignore_empty_key' => true]);
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $this->post('/user', ['field' => 'changed'])
-            ->assertStatus(Response::HTTP_OK);
+
+        $this->post('/account')->assertOk();
     }
 
     #[Test]
-    public function request_without_authenticated_user_builds_key_ok()
+    public function zero_is_a_valid_idempotency_key(): void
     {
-        $key = 'unique-key-123';
-        $this->post('/account', [], ['Idempotency-Key' => $key]);
+        $headers = ['Idempotency-Key' => '0'];
 
-        $cacheKey = $this->getCacheKey($key);
-        $this->assertTrue(Cache::has($cacheKey));
-
-        $cachedEntry = Cache::get($cacheKey);
-        $this->assertIsArray($cachedEntry);
-        $this->assertArrayHasKey('body', $cachedEntry);
+        $this->post('/account', [], $headers)->assertOk();
+        $this->post('/account', [], $headers)
+            ->assertOk()
+            ->assertHeader('Idempotency-Replayed', '0');
     }
 
     #[Test]
-    public function config_change_to_error_on_duplicate_works()
+    public function oversized_keys_return_bad_request(): void
     {
-        config(['idempotency.on_duplicate_behaviour' => \Square1\LaravelIdempotency\Enums\DuplicateBehaviour::EXCEPTION->value]);
-        $user = $this->getUnguardedUser(['field' => 'default']);
-        $this->actingAs($user);
-        $key = 'unique-key-123';
+        $this->post('/account', [], ['Idempotency-Key' => str_repeat('a', 256)])
+            ->assertBadRequest()
+            ->assertJson(['class' => 'InvalidIdempotencyKeyException']);
+    }
 
-        $firstResponse = $this->post('/user', ['field' => 'change'], ['Idempotency-Key' => $key]);
-        $secondResponse = $this->post('/user', ['field' => 'should not change'], ['Idempotency-Key' => $key]);
+    #[Test]
+    public function the_header_name_can_be_configured(): void
+    {
+        config(['idempotency.idempotency_header' => 'X-Custom-Key']);
+        $headers = ['X-Custom-Key' => 'custom-key'];
+        $payload = ['item' => 'book'];
 
-        $firstResponse->assertStatus(Response::HTTP_OK);
-        $secondResponse->assertStatus(Response::HTTP_BAD_REQUEST)
+        $this->post('/account', $payload, $headers)->assertOk();
+        $this->post('/account', $payload, $headers)
+            ->assertOk()
+            ->assertHeader('Idempotency-Replayed', 'custom-key');
+    }
+
+    #[Test]
+    public function non_enforced_methods_pass_through_without_a_key(): void
+    {
+        config(['idempotency.enforced_verbs' => ['post']]);
+
+        $this->get('/user')->assertOk();
+    }
+
+    #[Test]
+    public function invalid_configuration_returns_an_internal_server_error(): void
+    {
+        config(['idempotency.enforced_verbs' => ['POST', 'INVALID']]);
+
+        $this->post('/account', [], ['Idempotency-Key' => 'key'])
+            ->assertInternalServerError()
+            ->assertJson(['class' => 'InvalidConfigurationException']);
+    }
+
+    #[Test]
+    public function invalid_in_flight_overrides_return_an_internal_server_error(): void
+    {
+        $this->app['router']->post('/invalid-in-flight-override', fn () => response('ok'))
+            ->middleware('idempotency:invalid');
+
+        $this->post('/invalid-in-flight-override', [], ['Idempotency-Key' => 'key'])
+            ->assertInternalServerError()
+            ->assertJson(['class' => 'InvalidConfigurationException']);
+    }
+
+    #[Test]
+    public function completed_duplicates_can_be_rejected(): void
+    {
+        config(['idempotency.on_duplicate_behaviour' => DuplicateBehaviour::EXCEPTION->value]);
+        $headers = ['Idempotency-Key' => 'duplicate-error'];
+        $payload = ['item' => 'book'];
+
+        $this->post('/account', $payload, $headers)->assertOk();
+        $this->post('/account', $payload, $headers)
+            ->assertStatus(Response::HTTP_CONFLICT)
             ->assertJson(['class' => 'DuplicateRequestException']);
     }
 
     #[Test]
-    public function duplicate_request_timeout_works()
+    public function in_flight_duplicates_are_rejected_with_retry_after(): void
     {
-        config(['idempotency.max_lock_wait_time' => 2]);
-        $key = 'unique-key-123';
-        $cacheKey = $this->getCacheKey($key);
-        $lockKey = 'lock:'.$cacheKey;
+        $key = 'in-flight';
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', $key);
+        $lock = Cache::getStore()->lock($this->lockKey($cacheKey), 30);
+        $this->assertTrue($lock->get());
 
-        $lockMock = Mockery::mock();
-        $lockMock->shouldReceive('get')->andReturn(false);
-        // Mock the cache facade
-        Cache::shouldReceive('lock')
-            ->with($lockKey)
-            ->andReturn($lockMock); // Simulate that the lock is present
-
-        Cache::shouldReceive('has')
-            ->with($cacheKey)
-            ->andReturn(null);
-
-        $this->post('/account', [], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'LockWaitExceededException']);
+        try {
+            $this->post('/account', [], ['Idempotency-Key' => $key])
+                ->assertStatus(Response::HTTP_CONFLICT)
+                ->assertHeader('Retry-After', '1')
+                ->assertJson(['class' => 'RequestInProgressException']);
+        } finally {
+            $lock->release();
+        }
     }
 
     #[Test]
-    public function duplicate_request_polling_cache_returns_cached_value_once_available()
+    public function in_flight_rejections_do_not_fingerprint_the_request(): void
     {
-        config(['idempotency.max_lock_wait_time' => 3]);
-        $key = 'unique-key-123';
-        $cacheKey = $this->getCacheKey($key);
-        $lockKey = 'lock:'.$cacheKey;
+        $this->app->instance(RequestFingerprint::class, new class extends RequestFingerprint
+        {
+            public function make(Request $request): string
+            {
+                throw new \RuntimeException('The request should not be fingerprinted.');
+            }
+        });
 
-        // Response that gets populated after first cache check failure
-        $cacheResponse = [
-            'body' => '{"status":"Hello"}',
+        $key = 'lazy-fingerprint';
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', $key);
+        $lock = Cache::getStore()->lock($this->lockKey($cacheKey), 30);
+        $this->assertTrue($lock->get());
+
+        try {
+            $this->post('/account', [], ['Idempotency-Key' => $key])
+                ->assertConflict()
+                ->assertJson(['class' => 'RequestInProgressException']);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    #[Test]
+    public function wait_override_times_out_with_retry_after(): void
+    {
+        config(['idempotency.wait_timeout' => 1]);
+        $key = 'wait-timeout';
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', $key);
+        $lock = Cache::getStore()->lock($this->lockKey($cacheKey), 30);
+        $this->assertTrue($lock->get());
+
+        $this->app['router']->post('/wait-override', fn () => response('ok'))
+            ->middleware('idempotency:wait');
+
+        try {
+            $this->post('/wait-override', [], ['Idempotency-Key' => $key])
+                ->assertStatus(Response::HTTP_CONFLICT)
+                ->assertHeader('Retry-After', '1')
+                ->assertJson(['class' => 'RequestInProgressException']);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    #[Test]
+    public function wait_override_replays_a_response_when_it_becomes_available(): void
+    {
+        if (! function_exists('pcntl_alarm') || ! function_exists('pcntl_signal')) {
+            $this->markTestSkipped('The PCNTL extension is required for this timing test.');
+        }
+
+        config(['idempotency.wait_timeout' => 2]);
+        $key = 'wait-success';
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', $key);
+        $lock = Cache::getStore()->lock($this->lockKey($cacheKey), 30);
+        $this->assertTrue($lock->get());
+
+        $this->app['router']->post('/wait-override-success', fn () => response('unexpected'))
+            ->middleware('idempotency:wait');
+
+        pcntl_async_signals(true);
+        pcntl_signal(SIGALRM, function () use ($cacheKey, $key): void {
+            Cache::put($cacheKey, [
+                'version' => 2,
+                'body' => 'completed response',
+                'status' => 200,
+                'headers' => ['x-completed' => ['yes']],
+                'path' => 'wait-override-success',
+                'originalKey' => $key,
+                'fingerprint' => app(RequestFingerprint::class)->make(Request::create('/wait-override-success', 'POST')),
+                'replayable' => true,
+            ], 60);
+        });
+        pcntl_alarm(1);
+
+        try {
+            $this->post('/wait-override-success', [], ['Idempotency-Key' => $key])
+                ->assertOk()
+                ->assertSee('completed response')
+                ->assertHeader('X-Completed', 'yes')
+                ->assertHeader('Idempotency-Replayed', 'wait-success');
+        } finally {
+            pcntl_alarm(0);
+            pcntl_signal(SIGALRM, SIG_DFL);
+            $lock->release();
+        }
+    }
+
+    #[Test]
+    public function locks_are_released_after_downstream_exceptions(): void
+    {
+        $headers = ['Idempotency-Key' => 'exception-release'];
+
+        $this->post('/throws-once', [], $headers)->assertInternalServerError();
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', 'exception-release');
+        $lock = Cache::getStore()->lock($this->lockKey($cacheKey), 30);
+
+        $this->assertTrue($lock->get());
+        $lock->release();
+    }
+
+    #[Test]
+    public function cache_entries_use_bounded_hashed_keys(): void
+    {
+        $key = str_repeat('a', 255);
+
+        $this->post('/account', [], ['Idempotency-Key' => $key])->assertOk();
+
+        $cacheKey = $this->cacheKey('ip:127.0.0.1', $key);
+        $this->assertLessThan(250, strlen($cacheKey));
+        $this->assertTrue(Cache::has($cacheKey));
+        $this->assertIsArray(Cache::get($cacheKey));
+    }
+
+    #[Test]
+    public function replay_filters_unsafe_headers(): void
+    {
+        $headers = ['Idempotency-Key' => 'safe-headers'];
+
+        $this->post('/headers', [], $headers)->assertCookie('session-test');
+        $replay = $this->post('/headers', [], $headers)
+            ->assertOk()
+            ->assertHeader('X-Safe', 'kept')
+            ->assertHeader('Idempotency-Replayed', 'safe-headers');
+
+        $this->assertSame([], $replay->headers->getCookies());
+    }
+
+    #[Test]
+    public function unreplayable_responses_leave_a_completion_marker(): void
+    {
+        $headers = ['Idempotency-Key' => 'stream-response'];
+
+        $this->post('/stream', [], $headers)->assertOk();
+        $this->post('/stream', [], $headers)
+            ->assertStatus(Response::HTTP_CONFLICT)
+            ->assertJson(['class' => 'UnreplayableResponseException']);
+
+        $this->assertSame(1, $this->controllerExecutionCount);
+    }
+
+    #[Test]
+    public function disabled_response_categories_are_not_cached(): void
+    {
+        config(['idempotency.cache_statuses.client_error' => false]);
+        $headers = ['Idempotency-Key' => 'client-error'];
+
+        $this->post('/client-error', [], $headers)->assertStatus(422);
+        $this->post('/client-error', [], $headers)->assertStatus(422);
+
+        $this->assertSame(2, $this->controllerExecutionCount);
+    }
+
+    #[Test]
+    public function middleware_exposes_request_attributes_downstream(): void
+    {
+        $this->post('/attributes', [], ['Idempotency-Key' => 'attributes-key'])
+            ->assertOk()
+            ->assertJson([
+                'idempotent' => true,
+                'key' => 'attributes-key',
+                'scope' => 'ip:127.0.0.1',
+            ]);
+    }
+
+    #[Test]
+    public function corrupt_cached_values_return_an_internal_server_error(): void
+    {
+        $key = 'corrupt-cache';
+        Cache::put($this->cacheKey('ip:127.0.0.1', $key), 'not-a-response');
+
+        $this->post('/account', [], ['Idempotency-Key' => $key])
+            ->assertInternalServerError()
+            ->assertJson(['class' => 'CorruptedCacheDataException']);
+    }
+
+    #[Test]
+    public function cached_values_with_missing_fields_are_rejected(): void
+    {
+        $key = 'missing-fields';
+        Cache::put($this->cacheKey('ip:127.0.0.1', $key), ['body' => 'incomplete']);
+
+        $this->post('/account', [], ['Idempotency-Key' => $key])
+            ->assertInternalServerError()
+            ->assertJson(['class' => 'CorruptedCacheDataException']);
+    }
+
+    #[Test]
+    public function cached_values_with_invalid_headers_are_rejected(): void
+    {
+        $key = 'invalid-headers';
+        Cache::put($this->cacheKey('ip:127.0.0.1', $key), [
+            'version' => 2,
+            'body' => 'response',
             'status' => 200,
-            'headers' => ['Header' => 'Hi'],
+            'headers' => ['x-invalid' => [42]],
             'path' => 'account',
             'originalKey' => $key,
-        ];
-
-        $lockMock = Mockery::mock();
-        $lockMock->shouldReceive('get')
-            ->once()
-            ->andReturn(false);
-        // Mock the cache facade
-        Cache::shouldReceive('lock')
-            ->with($lockKey)
-            ->andReturn($lockMock); // Simulate that the lock is present
-
-        // Return false for first check, then on re-check, data is there
-        Cache::shouldReceive('has')
-            ->with($cacheKey)
-            ->andReturn(false, true);
-        Cache::shouldReceive('get')
-            ->once()
-            ->andReturn($cacheResponse);
+            'fingerprint' => 'fingerprint',
+            'replayable' => true,
+        ]);
 
         $this->post('/account', [], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_OK)
-            ->assertJson(['status' => 'Hello']);
-    }
-
-    #[Test]
-    public function unrecognised_http_verb_throws_exception()
-    {
-        // Set an invalid HTTP verb in the config
-        config(['idempotency.enforced_verbs' => ['POST', 'INVALID_VERB']]);
-
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => 'test-key'])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'InvalidConfigurationException']);
-    }
-
-    #[Test]
-    public function unrecognised_duplicate_behaviour_throws_exception()
-    {
-        // Set an invalid duplicate behavior in the config
-        config(['idempotency.on_duplicate_behaviour' => 'invalid_behavior']);
-
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => 'test-key'])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'InvalidConfigurationException']);
-    }
-
-    #[Test]
-    public function it_throws_corrupted_cache_data_exception_for_invalid_cached_object()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'corrupted-cache-key';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        // Manually put a string into the cache
-        Cache::put($cacheKey, 'this is not a valid cached object');
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
+            ->assertInternalServerError()
             ->assertJson(['class' => 'CorruptedCacheDataException']);
     }
 
-    #[Test]
-    public function it_handles_cached_object_from_prior_package_version()
+    private function cacheKey(string $scope, string $idempotencyKey): string
     {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'object-cache-key';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        // Simulate a CachedResponseValue object left in cache from a prior package version
-        $cachedObject = new \Square1\LaravelIdempotency\Providers\CachedResponseValue(
-            json_encode(['message' => 'Hello from object cache']),
-            Response::HTTP_OK,
-            ['x-custom-header' => ['object_value']],
-            'user',
-            $key,
-        );
-
-        Cache::put($cacheKey, $cachedObject, config('idempotency.cache_duration'));
-
-        $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
-
-        $response->assertStatus(Response::HTTP_OK)
-            ->assertJson(['message' => 'Hello from object cache'])
-            ->assertHeader('x-custom-header', 'object_value')
-            ->assertHeader('Idempotency-Relayed', $key);
+        return 'idempotency:response:v2:'.hash('sha256', serialize([$scope, $idempotencyKey]));
     }
 
-    #[Test]
-    public function it_handles_array_cache_format_successfully()
+    private function lockKey(string $cacheKey): string
     {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'array-key';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        $cachedData = [
-            'body' => json_encode(['message' => 'Hello from cache']),
-            'status' => Response::HTTP_OK,
-            'headers' => ['x-custom-header' => ['legacy_value']],
-            'path' => 'user',
-            'originalKey' => $key,
-        ];
-
-        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
-
-        $response = $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key]);
-
-        $response->assertStatus(Response::HTTP_OK)
-            ->assertJson(['message' => 'Hello from cache'])
-            ->assertHeader('x-custom-header', 'legacy_value')
-            ->assertHeader('Idempotency-Relayed', $key);
-    }
-
-    #[Test]
-    public function it_handles_array_with_missing_keys()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'missing-keys';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        $cachedData = [
-            'body' => json_encode(['message' => 'Hello from cache']),
-            // Missing required keys: 'status', 'headers', 'path', 'originalKey'
-        ];
-
-        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'CorruptedCacheDataException']);
-    }
-
-    #[Test]
-    public function it_handles_array_with_invalid_status()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'invalid-status';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        $cachedData = [
-            'body' => json_encode(['message' => 'Hello from cache']),
-            'status' => -1, // Invalid status
-            'headers' => ['x-custom-header' => ['legacy_value']],
-            'path' => 'user',
-            'originalKey' => $key,
-        ];
-
-        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'InvalidCachedValueException']);
-    }
-
-    #[Test]
-    public function it_handles_array_with_empty_path()
-    {
-        $user = $this->getUnguardedUser();
-        $this->actingAs($user);
-        $key = 'empty-path';
-        $cacheKey = 'idempotency:'.$user->id.':'.$key;
-
-        $cachedData = [
-            'body' => json_encode(['message' => 'Hello from cache']),
-            'status' => Response::HTTP_OK,
-            'headers' => ['x-custom-header' => ['legacy_value']],
-            'path' => '', // Empty path
-            'originalKey' => $key,
-        ];
-
-        Cache::put($cacheKey, $cachedData, config('idempotency.cache_duration'));
-
-        $this->post('/user', ['field' => 'test'], ['Idempotency-Key' => $key])
-            ->assertStatus(Response::HTTP_BAD_REQUEST)
-            ->assertJson(['class' => 'InvalidCachedValueException']);
-    }
-
-    private function getCacheKey(string $key)
-    {
-        $request = app(Request::class);
-        $ipAddress = request()->ip();
-
-        return "idempotency:{$ipAddress}:{$key}";
+        return 'idempotency:lock:v2:'.hash('sha256', $cacheKey);
     }
 }

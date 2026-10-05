@@ -25,8 +25,10 @@ class ResolveUserIdFromConfigTest extends TestCase
         $this->actingAs($user);
         $this->post('/user', ['data' => 'value'], ['Idempotency-Key' => $key]);
 
-        // Custom resolver implements custom id logic for key building
-        $cacheKey = 'idempotency:custom-user-id:'.$key;
+        $cacheKey = 'idempotency:response:v2:'.hash(
+            'sha256',
+            serialize(['user:custom-user-id', $key]),
+        );
         $this->assertTrue(Cache::has($cacheKey));
 
         $cachedEntry = Cache::get($cacheKey);

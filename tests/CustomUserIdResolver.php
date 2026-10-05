@@ -6,7 +6,6 @@ class CustomUserIdResolver
 {
     public function resolveUserId()
     {
-        // Custom logic to resolve user ID
         return 'custom-user-id';
     }
 }
