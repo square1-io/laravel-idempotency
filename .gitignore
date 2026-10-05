@@ -4,3 +4,4 @@ docs
 vendor
 .phpunit.result.cache
 .phpunit.cache
+.phpstan.cache
