@@ -95,6 +95,7 @@ class CachedResponseValueTest extends TestCase
         return [
             'Status 0' => [0, 'Invalid HTTP status code provided for cached response. Status: 0'],
             'Status -1' => [-1, 'Invalid HTTP status code provided for cached response. Status: -1'],
+            'Status 600' => [600, 'Invalid HTTP status code provided for cached response. Status: 600'],
         ];
     }
 }

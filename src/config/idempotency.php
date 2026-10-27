@@ -1,30 +1,33 @@
 <?php
 
 return [
-    'cache_duration' => 86400, // 1 day in seconds
+    'cache_duration' => env('IDEMPOTENCY_CACHE_DURATION', 86400),
 
-    // The header to expect in the request
-    'idempotency_header' => 'Idempotency-Key',
+    'cache_store' => env('IDEMPOTENCY_CACHE_STORE'),
 
-    // What to do when we get a duplicate?
-    // Options are:
-    // - replay: Sends the same response seen previously
-    // - exception: Throw an exception
-    'on_duplicate_behaviour' => 'replay',
+    'idempotency_header' => env('IDEMPOTENCY_HEADER', 'Idempotency-Key'),
 
-    // Should we carry on if a user has not supplied an idempotency key?
-    // Setting this to false will throw a MissingIdempotencyKey exception if no key is supplied.
-    'ignore_empty_key' => false,
+    'ignore_empty_key' => env('IDEMPOTENCY_IGNORE_EMPTY_KEY', false),
 
-    // What are the HTTP verbs we should apply idempotency checks to? Any other verbs, we shall
-    // not implement the checks, allowing requests to pass through the middleware
     'enforced_verbs' => ['POST', 'PUT', 'PATCH', 'DELETE'],
 
-    // When a race condition happens, we create a cache lock. How long should the lock persist?
-    'max_lock_wait_time' => 10,
+    'scope' => env('IDEMPOTENCY_SCOPE', 'user'),
 
-    // Define custom resolver of per-user identifier. Leave this commented out
-    // to default to auth()->user()->id. To support config caching, resolver should
-    // be defined as below - class and method pair.
+    'on_duplicate_behaviour' => env('IDEMPOTENCY_ON_DUPLICATE', 'replay'),
+
+    'on_in_flight_behaviour' => env('IDEMPOTENCY_ON_IN_FLIGHT', 'reject'),
+
+    'lock_ttl' => env('IDEMPOTENCY_LOCK_TTL', 30),
+
+    'wait_timeout' => env('IDEMPOTENCY_WAIT_TIMEOUT', 2),
+
+    'cache_statuses' => [
+        'informational' => true,
+        'success' => true,
+        'redirection' => true,
+        'client_error' => true,
+        'server_error' => true,
+    ],
+
     // 'user_id_resolver' => [ExampleUserIdResolver::class, 'resolveUserId'],
 ];

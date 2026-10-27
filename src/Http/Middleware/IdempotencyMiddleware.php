@@ -3,197 +3,350 @@
 namespace Square1\LaravelIdempotency\Http\Middleware;
 
 use Closure;
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Square1\LaravelIdempotency\Enums\DuplicateBehaviour;
+use Square1\LaravelIdempotency\Enums\InFlightBehaviour;
+use Square1\LaravelIdempotency\Enums\ResponseCategory;
 use Square1\LaravelIdempotency\Exceptions\CorruptedCacheDataException;
 use Square1\LaravelIdempotency\Exceptions\DuplicateRequestException;
 use Square1\LaravelIdempotency\Exceptions\InvalidConfigurationException;
-use Square1\LaravelIdempotency\Exceptions\LockWaitExceededException;
-use Square1\LaravelIdempotency\Exceptions\MismatchedPathException;
+use Square1\LaravelIdempotency\Exceptions\InvalidIdempotencyKeyException;
+use Square1\LaravelIdempotency\Exceptions\MismatchedRequestException;
 use Square1\LaravelIdempotency\Exceptions\MissingIdempotencyKeyException;
+use Square1\LaravelIdempotency\Exceptions\RequestInProgressException;
+use Square1\LaravelIdempotency\Exceptions\UnreplayableResponseException;
 use Square1\LaravelIdempotency\Providers\CachedResponseValue;
+use Square1\LaravelIdempotency\Support\CacheKeys;
+use Square1\LaravelIdempotency\Support\IdempotencyOptions;
+use Square1\LaravelIdempotency\Support\RequestFingerprint;
+use Square1\LaravelIdempotency\Support\ScopeResolver;
+use Symfony\Component\HttpFoundation\Response;
 
 class IdempotencyMiddleware
 {
-    public function handle(Request $request, Closure $next)
-    {
-        $this->validateConfig();
+    private const REPLAY_HEADER = 'Idempotency-Replayed';
 
-        // If we are getting a verb we don't care about, pass the request straight through
-        if (! in_array($request->method(), config('idempotency.enforced_verbs'))) {
+    private const MAX_KEY_LENGTH = 255;
+
+    private const POLL_INTERVAL_MILLISECONDS = 100;
+
+    private const EXCLUDED_RESPONSE_HEADERS = [
+        'connection',
+        'date',
+        'keep-alive',
+        'proxy-authenticate',
+        'proxy-authorization',
+        'set-cookie',
+        'te',
+        'trailer',
+        'transfer-encoding',
+        'upgrade',
+    ];
+
+    public function __construct(
+        private readonly ScopeResolver $scopeResolver,
+        private readonly RequestFingerprint $fingerprint,
+        private readonly CacheKeys $cacheKeys,
+    ) {}
+
+    public function handle(Request $request, Closure $next, ?string $inFlightBehaviour = null): Response
+    {
+        $options = IdempotencyOptions::fromConfig($inFlightBehaviour);
+
+        if (! in_array(strtoupper($request->method()), $options->enforcedVerbs, true)) {
             return $next($request);
         }
 
-        $idempotencyKey = $request->header(config('idempotency.idempotency_header'));
-
-        if (empty($idempotencyKey)) {
-            if (config('idempotency.ignore_empty_key')) {
-                return $next($request);
-            } else {
-                throw new MissingIdempotencyKeyException(__('Idempotency key "'.config('idempotency.idempotency_header').'" not found.'));
-            }
+        $idempotencyKey = $this->resolveIdempotencyKey($request, $options);
+        if ($idempotencyKey === null) {
+            return $next($request);
         }
 
-        // Get the user ID resolver from the configuration.
-        // If not set, then either returns the authenticated user's ID or request ip.
-        $userId = $this->resolveUserIdFromConfig(config('idempotency.user_id_resolver'), $request);
-
-        $cacheKey = $this->buildCacheKey($userId, $idempotencyKey);
-
-        if (Cache::has($cacheKey)) {
-            return $this->handleCachedResponse($cacheKey, $request);
+        $scope = $this->scopeResolver->resolve($request, $options);
+        $cache = Cache::store($options->cacheStore);
+        $cacheKey = $this->buildCacheKey($scope->cacheValue(), $idempotencyKey);
+        $cached = $this->getCachedResponse($cache, $cacheKey);
+        if ($cached instanceof CachedResponseValue) {
+            return $this->handleCachedResponse($cached, $request, $idempotencyKey, $options);
         }
 
-        $lock = Cache::lock($this->buildLockKey($cacheKey));
+        $store = $cache->getStore();
+        if (! $store instanceof LockProvider) {
+            throw new InvalidConfigurationException('The configured idempotency cache store does not support atomic locks.');
+        }
+
+        $lock = $store->lock($this->buildLockKey($cacheKey), $options->lockTtl);
 
         if (! $lock->get()) {
-            return $this->waitForCacheLock($cacheKey, $request);
-        }
-
-        $response = $this->processRequest($request, $cacheKey, $next);
-        $lock->release();
-
-        return $response;
-    }
-
-    private function waitForCacheLock(string $cacheKey, Request $request)
-    {
-        $maxWait = config('idempotency.max_lock_wait_time', 1);
-        $tries = 0;
-        $maxTries = $maxWait - 1;
-        $sleep = 1;
-
-        while ($tries < $maxTries) {
-            if (Cache::has($cacheKey)) {
-                // The response is now cached, break the loop
-                return $this->handleCachedResponse($cacheKey, $request);
+            if ($options->inFlightBehaviour === InFlightBehaviour::REJECT) {
+                throw new RequestInProgressException(
+                    __('A request with this idempotency key is already being processed.'),
+                );
             }
 
-            // Wait for a bit before checking again
-            sleep($sleep);
-            $tries++;
+            return $this->waitForResponse(
+                $cache,
+                $cacheKey,
+                $request,
+                $idempotencyKey,
+                $options,
+            );
         }
 
-        // Throw an exception if the response is not available after waiting
-        throw new LockWaitExceededException(__('Lock wait time of '.$maxWait.' seconds exceeded.'));
-    }
+        try {
+            $cached = $this->getCachedResponse($cache, $cacheKey);
+            if ($cached instanceof CachedResponseValue) {
+                return $this->handleCachedResponse($cached, $request, $idempotencyKey, $options);
+            }
 
-    /**
-     * Resolve the user ID from a config value if it's not a closure.
-     *
-     * @param  mixed  $userIdResolver
-     * @param  \Illuminate\Http\Request  $request
-     * @return mixed
-     */
-    protected function resolveUserIdFromConfig($userIdResolver, Request $request)
-    {
-        if (is_array($userIdResolver) && count($userIdResolver) === 2) {
-            // Assuming the configuration is in the format [ClassName::class, 'methodName']
-            [$class, $method] = $userIdResolver;
+            $request->attributes->set('idempotent', true);
+            $request->attributes->set('idempotency-key', $idempotencyKey);
+            $request->attributes->set('idempotency-scope', $scope->cacheValue());
 
-            return app($class)->$method();
+            return $this->processRequest(
+                $request,
+                $cache,
+                $cacheKey,
+                $idempotencyKey,
+                $next,
+                $options,
+            );
+        } finally {
+            $lock->release();
         }
-
-        // Default to authenticated user's ID if the configuration is not a valid callable
-        return auth()->check() ? auth()->user()->id : $request->ip();
     }
 
-    protected function buildCacheKey(string $userId, string $idempotencyKey): string
+    protected function buildCacheKey(string $scope, string $idempotencyKey): string
     {
-        return "idempotency:{$userId}:{$idempotencyKey}";
+        return $this->cacheKeys->response($scope, $idempotencyKey);
     }
 
     protected function buildLockKey(string $cacheKey): string
     {
-        return "lock:{$cacheKey}";
+        return $this->cacheKeys->lock($cacheKey);
     }
 
-    protected function processRequest(Request $request, string $cacheKey, Closure $next)
-    {
+    protected function processRequest(
+        Request $request,
+        Repository $cache,
+        string $cacheKey,
+        string $idempotencyKey,
+        Closure $next,
+        IdempotencyOptions $options,
+    ): Response {
+        $fingerprint = $this->fingerprint->make($request);
         $response = $next($request);
+        $category = ResponseCategory::fromStatusCode($response->getStatusCode());
 
-        Cache::put($cacheKey, [
-            'body' => $response->getContent(),
+        if (! $options->cacheStatuses[$category->value]) {
+            return $response;
+        }
+
+        $content = $response->getContent();
+        $replayable = is_string($content);
+        $cached = [
+            'version' => 2,
+            'body' => $replayable ? $content : null,
             'status' => $response->getStatusCode(),
-            'headers' => $response->headers->all(),
+            'headers' => $this->filterHeaders($response->headers->all()),
             'path' => $request->path(),
-            'originalKey' => $request->header(config('idempotency.idempotency_header')),
-        ], config('idempotency.cache_duration'));
+            'originalKey' => $idempotencyKey,
+            'fingerprint' => $fingerprint,
+            'replayable' => $replayable,
+        ];
+
+        $cache->put($cacheKey, $cached, $options->cacheDuration);
 
         return $response;
     }
 
-    protected function handleCachedResponse(string $cacheKey, Request $request)
+    private function resolveIdempotencyKey(Request $request, IdempotencyOptions $options): ?string
     {
-        $cachedValue = Cache::get($cacheKey);
+        $idempotencyKey = $request->header($options->header);
 
-        // Support CachedResponseValue objects still in cache from prior package versions
-        if ($cachedValue instanceof CachedResponseValue) {
-            $cached = $cachedValue;
-        } elseif (is_array($cachedValue)) {
-            // Validate that all required keys are present
-            $requiredKeys = ['body', 'status', 'headers', 'path', 'originalKey'];
-            foreach ($requiredKeys as $key) {
-                if (! array_key_exists($key, $cachedValue)) {
-                    throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
-                }
+        if ($idempotencyKey === null || $idempotencyKey === '') {
+            if ($options->ignoreEmptyKey) {
+                return null;
             }
 
-            $cached = new CachedResponseValue(
-                $cachedValue['body'],
-                $cachedValue['status'],
-                $cachedValue['headers'],
-                $cachedValue['path'],
-                $cachedValue['originalKey']
+            throw new MissingIdempotencyKeyException(__("Idempotency key \"{$options->header}\" not found."));
+        }
+
+        if (! is_string($idempotencyKey)) {
+            throw new InvalidIdempotencyKeyException(__('The idempotency key must be a string.'));
+        }
+
+        if (trim($idempotencyKey) === '') {
+            throw new InvalidIdempotencyKeyException(__('The idempotency key cannot contain only whitespace.'));
+        }
+
+        if (strlen($idempotencyKey) > self::MAX_KEY_LENGTH) {
+            throw new InvalidIdempotencyKeyException(__(
+                'The idempotency key cannot exceed '.self::MAX_KEY_LENGTH.' bytes.',
+            ));
+        }
+
+        if (preg_match('/[\x00-\x1F\x7F]/', $idempotencyKey) === 1) {
+            throw new InvalidIdempotencyKeyException(__('The idempotency key contains invalid control characters.'));
+        }
+
+        return $idempotencyKey;
+    }
+
+    private function waitForResponse(
+        Repository $cache,
+        string $cacheKey,
+        Request $request,
+        string $idempotencyKey,
+        IdempotencyOptions $options,
+    ): Response {
+        $deadline = hrtime(true) + ($options->waitTimeout * 1_000_000_000);
+
+        do {
+            $cached = $this->getCachedResponse($cache, $cacheKey);
+            if ($cached instanceof CachedResponseValue) {
+                return $this->handleCachedResponse($cached, $request, $idempotencyKey, $options);
+            }
+
+            $remainingMicroseconds = intdiv(max(0, $deadline - hrtime(true)), 1_000);
+            if ($remainingMicroseconds === 0) {
+                break;
+            }
+
+            $baseMicroseconds = min(self::POLL_INTERVAL_MILLISECONDS * 1_000, $remainingMicroseconds);
+            $jitterMicroseconds = random_int(0, max(1, intdiv($baseMicroseconds, 4)));
+            usleep((int) min($baseMicroseconds + $jitterMicroseconds, $remainingMicroseconds));
+        } while (hrtime(true) < $deadline);
+
+        throw new RequestInProgressException(
+            __("A response was not available after waiting {$options->waitTimeout} seconds."),
+        );
+    }
+
+    private function getCachedResponse(
+        Repository $cache,
+        string $cacheKey,
+    ): ?CachedResponseValue {
+        $cached = $cache->get($cacheKey);
+
+        if ($cached === null) {
+            return null;
+        }
+
+        return $this->hydrateCachedResponse($cached);
+    }
+
+    private function hydrateCachedResponse(mixed $cached): CachedResponseValue
+    {
+        if (! is_array($cached)) {
+            throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected an array.'));
+        }
+
+        $requiredKeys = ['version', 'body', 'status', 'headers', 'path', 'originalKey', 'fingerprint', 'replayable'];
+        foreach ($requiredKeys as $key) {
+            if (! array_key_exists($key, $cached)) {
+                throw new CorruptedCacheDataException(__("Cached array is missing key: {$key}"));
+            }
+        }
+
+        if ($cached['version'] !== 2) {
+            throw new CorruptedCacheDataException(__('Cached response version is not supported.'));
+        }
+
+        if (! is_string($cached['fingerprint']) || $cached['fingerprint'] === '') {
+            throw new CorruptedCacheDataException(__('Cached response fingerprint is missing.'));
+        }
+
+        if (! is_bool($cached['replayable'])) {
+            throw new CorruptedCacheDataException(__('Cached response replayable value must be a boolean.'));
+        }
+
+        try {
+            return new CachedResponseValue(
+                body: $cached['body'],
+                status: $cached['status'],
+                headers: $this->validateCachedHeaders($cached['headers']),
+                path: $cached['path'],
+                originalKey: $cached['originalKey'],
+                fingerprint: $cached['fingerprint'],
+                version: 2,
+                replayable: $cached['replayable'],
             );
-        } else {
-            throw new CorruptedCacheDataException(__('Unexpected cache payload found. Expected array.'));
+        } catch (\TypeError $exception) {
+            throw new CorruptedCacheDataException(__('Cached response contains values of invalid types.'), $exception);
+        }
+    }
+
+    private function handleCachedResponse(
+        CachedResponseValue $cached,
+        Request $request,
+        string $idempotencyKey,
+        IdempotencyOptions $options,
+    ): Response {
+        if (! hash_equals($cached->originalKey, $idempotencyKey)) {
+            throw new MismatchedRequestException(__('The idempotency key resolved to a different cached request.'));
         }
 
-        if ($request->path() != $cached->path) {
-            throw new MismatchedPathException(__('Idempotency key previously used on different route ('.$cached->path.').'));
+        if ($cached->fingerprint === null || ! hash_equals($cached->fingerprint, $this->fingerprint->make($request))) {
+            throw new MismatchedRequestException(
+                __('Idempotency key previously used with different request parameters.'),
+            );
         }
 
-        if (config('idempotency.on_duplicate_behaviour') == DuplicateBehaviour::EXCEPTION->value) {
+        if ($options->duplicateBehaviour === DuplicateBehaviour::EXCEPTION) {
             throw new DuplicateRequestException(__('Duplicate request detected.'));
         }
 
-        return response($cached->body, $cached->status)
-            ->withHeaders($cached->headers)
-            ->header('Idempotency-Relayed', $cached->originalKey);
-    }
-
-    /**
-     * Validate that the configuration values are valid
-     *
-     * @throws InvalidConfigurationException
-     */
-    protected function validateConfig()
-    {
-        $behaviour = config('idempotency.on_duplicate_behaviour');
-
-        try {
-            // This will throw a ValueError if the behavior is not valid
-            DuplicateBehaviour::from($behaviour);
-        } catch (\ValueError $e) {
-            $validOptions = implode(', ', array_column(DuplicateBehaviour::cases(), 'value'));
-            throw new InvalidConfigurationException(
-                "Invalid idempotency duplicate behavior: '{$behaviour}'. Valid options are: {$validOptions}"
+        if (! $cached->replayable) {
+            throw new UnreplayableResponseException(
+                __('The original request completed, but its response type cannot be replayed.'),
             );
         }
 
-        // You can add similar validation for other config values if needed
-        $enforced_verbs = config('idempotency.enforced_verbs', []);
-        $valid_verbs = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+        return response($cached->body, $cached->status)
+            ->withHeaders($this->filterHeaders($cached->headers))
+            ->header(self::REPLAY_HEADER, $cached->originalKey);
+    }
 
-        foreach ($enforced_verbs as $verb) {
-            if (! in_array(strtoupper($verb), $valid_verbs)) {
-                throw new InvalidConfigurationException(
-                    "Invalid HTTP verb in enforced_verbs: '{$verb}'. Valid verbs are: ".
-                    implode(', ', $valid_verbs)
-                );
+    /**
+     * @return array<string, string|list<string>>
+     */
+    private function validateCachedHeaders(mixed $headers): array
+    {
+        if (! is_array($headers)) {
+            throw new CorruptedCacheDataException(__('Cached response headers must be an array.'));
+        }
+
+        foreach ($headers as $name => $values) {
+            if (! is_string($name) || (! is_string($values) && ! is_array($values))) {
+                throw new CorruptedCacheDataException(__('Cached response headers contain an invalid value.'));
+            }
+
+            if (is_array($values)) {
+                foreach ($values as $value) {
+                    if (! is_string($value)) {
+                        throw new CorruptedCacheDataException(__('Cached response headers contain an invalid value.'));
+                    }
+                }
             }
         }
+
+        return $headers;
+    }
+
+    /**
+     * @param  array<string, string|list<string>>  $headers
+     * @return array<string, string|list<string>>
+     */
+    private function filterHeaders(array $headers): array
+    {
+        return array_filter(
+            $headers,
+            static fn (string $name): bool => ! in_array(strtolower($name), self::EXCLUDED_RESPONSE_HEADERS, true),
+            ARRAY_FILTER_USE_KEY,
+        );
     }
 }
