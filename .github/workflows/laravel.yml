@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        php: [8.2, 8.3, 8.4, 8.5]
+        php: [8.2, 8.3, 8.4, 8.5, 8.6]
         laravel: ['12.*', '13.*']
         dependency-version: [prefer-lowest, prefer-stable]
         include:
@@ -25,6 +25,9 @@ jobs:
         exclude:
           - php: 8.2
             laravel: '13.*'
+          # Laravel 12 session handlers lack create_sid(); PHP 8.6 warns, Laravel converts it to an exception.
+          - php: 8.6
+            laravel: '12.*'
 
     name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.dependency-version }}
 
